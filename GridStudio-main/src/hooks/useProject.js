@@ -205,11 +205,10 @@ export function useProject() {
   // 新建工程
   const newProject = useCallback(() => {
     pushUndo();
-    const newId = generateId();
-    setTracks([{ id: newId, name: "Piano", program: 0, notes: [], volume: 80, pan: 64, mute: false }]);
+    setTracks([{ id: generateId(), name: "Piano", program: 0, notes: [], volume: 80, pan: 64, mute: false }]);
     setBpm(120);
     setMeta({ title: "", artist: "", singer: "", copyright: "" });
-    setCurrentTrackId(newId);
+    setCurrentTrackId(1); // 新生成的 id 是 1
   }, [pushUndo]);
 
   // 获取当前工程数据（用于自动保存）

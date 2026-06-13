@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useRef } from 'react';
+import { useTranslation } from '../lib/i18n';
 
 export default function SettingsModal({
   open,
@@ -7,19 +8,25 @@ export default function SettingsModal({
   onUiScaleChange,
   soundSource,
   onSoundSourceChange,
-  meta,
-  onMetaChange,
   autoSaveMode,
   onAutoSaveModeChange,
   onClearCache,
   onResetSettings,
+  lang,
+  onLangChange,
+  onLoadSF2,
+  sf2Loaded,
+  sf2Name,
 }) {
+  const fileInputRef = useRef(null);
+  const t = useTranslation(lang);
+
   if (!open) return null;
 
   const handleAutoSaveTypeChange = (type) => {
     let interval = 0;
     if (type === 'interval') {
-      interval = 60; // 默认60秒
+      interval = 60;
     }
     onAutoSaveModeChange({ type, interval });
   };
@@ -31,27 +38,112 @@ export default function SettingsModal({
     }
   };
 
+  const handleSF2Select = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const success = await onLoadSF2(arrayBuffer);
+      if (success) {
+        alert(lang === 'zh' ? `已加载音色库: ${file.name}` : `Soundfont loaded: ${file.name}`);
+      } else {
+        alert(lang === 'zh' ? '加载音色库失败' : 'Failed to load soundfont');
+      }
+    } catch (err) {
+      alert((lang === 'zh' ? '加载音色库失败: ' : 'Failed to load soundfont: ') + err.message);
+    }
+    
+    // 清空input以便再次选择同一文件
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
   return (
     <div className="modal active" onClick={onClose}>
-      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-        <h3>设置</h3>
+      <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxHeight: '80vh', overflowY: 'auto' }}>
+        <h3>{t.settings}</h3>
 
+        {/* 语言设置 */}
         <div className="settings-row">
-          <span>界面缩放</span>
+          <span>{t.language}</span>
+          <select value={lang} onChange={(e) => onLangChange(e.target.value)}>
+            <option value="zh">中文</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+
+        {/* 界面缩放 */}
+        <div className="settings-row">
+          <span>{t.uiScale}</span>
           <input type="range" min="70" max="150" step="5" value={uiScale} onChange={(e) => onUiScaleChange(parseInt(e.target.value))} />
           <span>{uiScale}%</span>
         </div>
 
-        <div className="settings-row">
-          <span>音色库</span>
-          <select value={soundSource} onChange={(e) => onSoundSourceChange(e.target.value)}>
-            <option value="default">默认振荡器（离线预设）</option>
-            <option value="network">网络音色库（MusyngKite）</option>
-          </select>
+        {/* 音色库管理 */}
+        <div className="settings-group">
+          <div style={{ fontWeight: 'bold', marginBottom: 8 }}>{t.soundSource}</div>
+          
+          <div className="settings-row">
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+              <input
+                type="radio"
+                name="soundSource"
+                value="default"
+                checked={soundSource === 'default'}
+                onChange={() => onSoundSourceChange('default')}
+              />
+              {t.defaultOscillator}
+            </label>
+          </div>
+          
+          <div className="settings-row">
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+              <input
+                type="radio"
+                name="soundSource"
+                value="network"
+                checked={soundSource === 'network'}
+                onChange={() => onSoundSourceChange('network')}
+              />
+              {t.networkSoundfont}
+            </label>
+          </div>
+          
+          <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 8 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+              <input
+                type="radio"
+                name="soundSource"
+                value="sf2"
+                checked={soundSource === 'sf2'}
+                onChange={() => {}}
+                disabled={!sf2Loaded}
+              />
+              {t.sf2Soundfont} {sf2Loaded && sf2Name && `(${sf2Name})`}
+            </label>
+            <div style={{ display: 'flex', gap: 8, marginLeft: 24 }}>
+              <button 
+                onClick={() => fileInputRef.current?.click()}
+                style={{ padding: '4px 12px', fontSize: '0.85rem' }}
+              >
+                {t.loadSF2}
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".sf2"
+                onChange={handleSF2Select}
+                style={{ display: 'none' }}
+              />
+            </div>
+          </div>
         </div>
 
+        {/* 自动保存 */}
         <div className="settings-group">
-          <div>自动保存</div>
+          <div style={{ fontWeight: 'bold', marginBottom: 8 }}>{t.autoSave}</div>
           <div className="settings-row">
             <label>
               <input
@@ -59,7 +151,7 @@ export default function SettingsModal({
                 name="autosave"
                 checked={autoSaveMode.type === 'onChange'}
                 onChange={() => handleAutoSaveTypeChange('onChange')}
-              /> 随改动自动保存
+              /> {t.autoSaveOnChange}
             </label>
             <label>
               <input
@@ -67,12 +159,12 @@ export default function SettingsModal({
                 name="autosave"
                 checked={autoSaveMode.type === 'interval'}
                 onChange={() => handleAutoSaveTypeChange('interval')}
-              /> 定时自动保存
+              /> {t.autoSaveInterval}
             </label>
           </div>
           {autoSaveMode.type === 'interval' && (
             <div className="settings-row">
-              <span>间隔（秒）</span>
+              <span>{t.intervalSeconds}</span>
               <input
                 type="number"
                 min="1"
@@ -81,25 +173,18 @@ export default function SettingsModal({
                 onChange={handleIntervalChange}
                 style={{ width: '100px' }}
               />
-              <span>秒（最大24小时）</span>
+              <span>{t.max24h}</span>
             </div>
           )}
         </div>
 
-        <div className="settings-group">
-          <div>MIDI 元数据</div>
-          <div className="settings-row"><span>标题</span><input type="text" value={meta.title} onChange={(e) => onMetaChange({ ...meta, title: e.target.value })} /></div>
-          <div className="settings-row"><span>作者</span><input type="text" value={meta.artist} onChange={(e) => onMetaChange({ ...meta, artist: e.target.value })} /></div>
-          <div className="settings-row"><span>歌手</span><input type="text" value={meta.singer} onChange={(e) => onMetaChange({ ...meta, singer: e.target.value })} /></div>
-          <div className="settings-row"><span>版权</span><input type="text" value={meta.copyright} onChange={(e) => onMetaChange({ ...meta, copyright: e.target.value })} /></div>
-        </div>
-
+        {/* 缓存和设置重置 */}
         <div className="settings-row" style={{ justifyContent: 'space-between' }}>
-          <button onClick={onClearCache}>清空所有本地缓存工程</button>
-          <button onClick={onResetSettings}>重置所有设置</button>
+          <button onClick={onClearCache}>{t.clearCache}</button>
+          <button onClick={onResetSettings}>{t.resetSettings}</button>
         </div>
 
-        <button onClick={onClose} style={{ marginTop: 16 }}>关闭</button>
+        <button onClick={onClose} style={{ marginTop: 16 }}>{t.close}</button>
       </div>
     </div>
   );

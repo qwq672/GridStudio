@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react';
+// src/components/TrackPanel.jsx
+import React, { useState } from 'react';
 import { Icons } from './Icons';
-import { useTranslation } from '../lib/i18n';
 
 // 完整的 GM 音色列表（0-127，中英文）
 const GM_INSTRUMENTS = [
@@ -134,151 +134,153 @@ const GM_INSTRUMENTS = [
   { id: 127, zh: "枪声", en: "Gunshot" }
 ];
 
+// 乐器选择面板（侧边栏，支持搜索和试听）
+const InstrumentSelector = ({ currentProgram, onSelect, onPreview }) => {
+  const [search, setSearch] = useState('');
+  const filtered = GM_INSTRUMENTS.filter(inst =>
+    inst.zh.includes(search) || inst.en.toLowerCase().includes(search.toLowerCase())
+  );
+  return (
+    <div style={{ marginTop: 8, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 8 }}>
+        <Icons.Search />
+        <input
+          type="text"
+          placeholder="搜索乐器"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{ flex: 1, fontSize: '0.7rem' }}
+        />
+      </div>
+      <div style={{ maxHeight: 200, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {filtered.map(inst => (
+          <div
+            key={inst.id}
+            onClick={() => onSelect(inst.id)}
+            style={{
+              padding: '4px 8px',
+              background: currentProgram === inst.id ? 'var(--accent)' : 'var(--button-bg)',
+              borderRadius: '20px',
+              cursor: 'pointer',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              fontSize: '0.7rem',
+            }}
+          >
+            <span>{inst.id}: {inst.zh} / {inst.en}</span>
+            <button
+              onClick={(e) => { e.stopPropagation(); onPreview(inst.id); }}
+              style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer' }}
+            >
+              <Icons.Play />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 export default function TrackPanel({
   tracks,
   currentTrackId,
   onSelectTrack,
   onAddTrack,
   onDeleteTrack,
-  onVolumeChange,
-  onPanChange,
-  onMuteToggle,
-  onProgramChange,
+  onUpdateTrack,
+  soundSource,
+  setSoundSource,
   playNote,
-  lang = 'zh',
 }) {
-  const [showInstrumentPanel, setShowInstrumentPanel] = useState({});
-  const [searchQuery, setSearchQuery] = useState({});
-  const [previewingId, setPreviewingId] = useState(null);
-  const t = useTranslation(lang);
+  const currentTrack = tracks.find(t => t.id === currentTrackId);
+  const [showInstrumentPanel, setShowInstrumentPanel] = useState(false);
 
-  const toggleInstrumentPanel = (id) => {
-    setShowInstrumentPanel(prev => ({ ...prev, [id]: !prev[id] }));
-  };
-
-  const handlePreview = (e, programId) => {
-    e.stopPropagation();
-    if (previewingId === programId) {
-      setPreviewingId(null);
-    } else {
-      setPreviewingId(programId);
-      // 播放 C4 音符试听
-      playNote('C4', 0.5, 90, programId);
-      setTimeout(() => setPreviewingId(null), 500);
+  const handleProgramChange = (newProgram) => {
+    if (currentTrack) {
+      onUpdateTrack(currentTrackId, { program: newProgram });
+      setShowInstrumentPanel(false);
+      // 试听新音色（播放C大调音阶）
+      const notes = ['C4','D4','E4','F4','G4','A4','B4','C5'];
+      notes.forEach((note, i) => {
+        setTimeout(() => playNote(note, 0.3, 80), i * 200);
+      });
     }
   };
 
-  const filteredInstruments = (trackId) => {
-    const query = searchQuery[trackId] || '';
-    if (!query) return GM_INSTRUMENTS;
-    
-    const lowerQuery = query.toLowerCase();
-    return GM_INSTRUMENTS.filter(inst => 
-      inst.id.toString().includes(query) ||
-      inst.zh.includes(query) ||
-      inst.en.toLowerCase().includes(lowerQuery)
-    );
+  const handlePreviewInstrument = (program) => {
+    const notes = ['C4','D4','E4','F4','G4','A4','B4','C5'];
+    notes.forEach((note, i) => {
+      setTimeout(() => playNote(note, 0.3, 80), i * 200);
+    });
   };
 
   return (
-    <div className="track-panel" style={{ background: '#2a2a2a', borderRadius: 8, width: 280, display: 'flex', flexDirection: 'column', overflow: 'hidden', border: '1px solid #3a3a3a' }}>
-      <div style={{ padding: 8, fontWeight: 'bold', borderBottom: '1px solid #3a3a3a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span>{t.tracks}</span>
+    <div className="track-panel">
+      <div className="track-header">
+        <span>轨道</span>
         <button onClick={onAddTrack}><Icons.Plus /></button>
       </div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div className="track-list">
         {tracks.map(track => (
           <div
             key={track.id}
+            className={`track-card ${track.id === currentTrackId ? 'selected' : ''}`}
             onClick={() => onSelectTrack(track.id)}
-            style={{
-              background: track.id === currentTrackId ? '#888' : '#2a2a2a',
-              padding: 6,
-              cursor: 'pointer',
-              borderRadius: 6,
-              border: `1px solid ${track.id === currentTrackId ? '#888' : '#3a3a3a'}`,
-            }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span>{track.name} (P{track.program})</span>
-              {tracks.length > 1 && (
+              {track.id !== 1 && (
                 <button onClick={(e) => { e.stopPropagation(); onDeleteTrack(track.id); }} style={{ padding: '2px 6px' }}>
                   <Icons.Trash />
                 </button>
               )}
             </div>
-            <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            <div className="controls-row">
               <Icons.Volume />
               <input
                 type="range"
                 min="0"
                 max="100"
                 value={track.volume}
-                onChange={e => { e.stopPropagation(); onVolumeChange(track.id, parseInt(e.target.value)); }}
+                onChange={e => onUpdateTrack(track.id, { volume: parseInt(e.target.value) })}
                 style={{ width: '60px' }}
               />
+              <span>{track.volume}%</span>
               <Icons.Pan />
               <input
                 type="range"
                 min="0"
                 max="127"
                 value={track.pan}
-                onChange={e => { e.stopPropagation(); onPanChange(track.id, parseInt(e.target.value)); }}
+                onChange={e => onUpdateTrack(track.id, { pan: parseInt(e.target.value) })}
                 style={{ width: '60px' }}
               />
-              <button onClick={(e) => { e.stopPropagation(); onMuteToggle(track.id); }}>
+              <button onClick={(e) => { e.stopPropagation(); onUpdateTrack(track.id, { mute: !track.mute }); }}>
                 {track.mute ? <Icons.Mute /> : <Icons.Unmute />}
               </button>
-              <button onClick={(e) => { e.stopPropagation(); toggleInstrumentPanel(track.id); }}>
+              <button onClick={(e) => { e.stopPropagation(); setShowInstrumentPanel(!showInstrumentPanel); }}>
                 <Icons.Settings />
               </button>
             </div>
-            {showInstrumentPanel[track.id] && (
-              <div style={{ marginTop: 8, borderTop: '1px solid #3a3a3a', paddingTop: 8 }} onClick={(e) => e.stopPropagation()}>
-                <div style={{ marginBottom: 8 }}>
-                  <input
-                    type="text"
-                    placeholder="搜索乐器号、中文名或英文名..."
-                    value={searchQuery[track.id] || ''}
-                    onChange={(e) => setSearchQuery(prev => ({ ...prev, [track.id]: e.target.value }))}
-                    style={{ width: '100%', padding: '4px 8px', fontSize: '0.75rem' }}
-                  />
-                </div>
-                <div style={{ maxHeight: 250, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  {filteredInstruments(track.id).map(inst => (
-                    <div
-                      key={inst.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        padding: '6px 8px',
-                        background: track.program === inst.id ? '#888' : '#3a3a3a',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                        fontSize: '0.75rem',
-                      }}
-                    >
-                      <span style={{ flex: 1, cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); onProgramChange(track.id, inst.id); }}>
-                        <strong>{inst.id}</strong>: {inst.zh} / {inst.en}
-                      </span>
-                      <button 
-                        onClick={(e) => handlePreview(e, inst.id)}
-                        style={{ 
-                          padding: '2px 8px',
-                          background: previewingId === inst.id ? '#5a6eff' : '#4a4a4a',
-                          fontSize: '0.7rem'
-                        }}
-                      >
-                        试听
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
+            {track.id === currentTrackId && showInstrumentPanel && (
+              <InstrumentSelector
+                currentProgram={currentTrack.program}
+                onSelect={handleProgramChange}
+                onPreview={handlePreviewInstrument}
+              />
             )}
           </div>
         ))}
+      </div>
+      <div style={{ padding: 8, borderTop: '1px solid var(--border)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <span>音色源</span>
+          <select value={soundSource} onChange={e => setSoundSource(e.target.value)} style={{ width: '120px' }}>
+            <option value="default">默认振荡器</option>
+            <option value="network">网络音色库</option>
+          </select>
+        </div>
       </div>
     </div>
   );

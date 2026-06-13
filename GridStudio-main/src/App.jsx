@@ -14,16 +14,6 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [midiInfoOpen, setMidiInfoOpen] = useState(false);
   const [mode, setMode] = useState('desktop');
-  const [uiScale, setUiScale] = useState(() => {
-    const saved = localStorage.getItem('gridstudio_ui_scale');
-    return saved ? parseInt(saved) : 100;
-  });
-  const [lang, setLang] = useState(() => {
-    const saved = localStorage.getItem('gridstudio_lang');
-    return saved || 'zh';
-  });
-  const [sf2Loaded, setSf2Loaded] = useState(false);
-  const [sf2Name, setSf2Name] = useState('');
 
   const project = useProject();
   const audioEngine = useAudioEngine();
@@ -36,13 +26,9 @@ export default function App() {
 
   const { triggerAutoSave } = useAutoSave(project.getCurrentProjectData, autoSaveMode);
 
-  // 只在有实际内容时才自动保存
   useEffect(() => {
-    const hasContent = project.tracks.some(t => t.notes && t.notes.length > 0);
-    if (hasContent) {
-      setHasUnsavedChanges(true);
-      triggerAutoSave();
-    }
+    setHasUnsavedChanges(true);
+    triggerAutoSave();
   }, [project.tracks, project.bpm, project.meta, project.currentTrackId]);
 
   useEffect(() => {
@@ -59,16 +45,8 @@ export default function App() {
 
   useEffect(() => {
     const autosaveData = loadAutosave();
-    // 只有当自动保存的数据有实际内容时才提示恢复
-    if (autosaveData && autosaveData.tracks?.length > 0) {
-      // 检查是否有实际的音符数据
-      const hasNotes = autosaveData.tracks.some(t => t.notes && t.notes.length > 0);
-      if (hasNotes) {
-        setPendingAutosave(autosaveData);
-      } else {
-        // 没有实际内容，清除自动保存
-        clearAutosave();
-      }
+    if (autosaveData && autosaveData.tracks?.length) {
+      setPendingAutosave(autosaveData);
     }
     setRecentProjects(getRecentProjects());
   }, []);
@@ -169,26 +147,10 @@ export default function App() {
     localStorage.removeItem('gridstudio_ui_scale');
     localStorage.removeItem('gridstudio_sound_source');
     localStorage.removeItem('gridstudio_autosave_mode');
-    localStorage.removeItem('gridstudio_lang');
     setAutoSaveMode({ type: 'onChange', interval: 0 });
-    setUiScale(100);
-    setLang('zh');
-    audioEngine.setSoundSource('default');
+    if (typeof onUiScaleChange === 'function') onUiScaleChange(100);
+    if (typeof onSoundSourceChange === 'function') onSoundSourceChange('default');
     alert('设置已重置');
-  };
-
-  const handleLangChange = (newLang) => {
-    setLang(newLang);
-    localStorage.setItem('gridstudio_lang', newLang);
-  };
-
-  const handleLoadSF2 = async (arrayBuffer) => {
-    const result = await audioEngine.loadSF2(arrayBuffer);
-    if (result.success) {
-      setSf2Loaded(true);
-      setSf2Name(result.name);
-    }
-    return result.success;
   };
 
   if (pendingAutosave) {
@@ -254,12 +216,8 @@ export default function App() {
       setSoundSource={audioEngine.setSoundSource}
       meta={project.meta}
       setMeta={project.setMeta}
-      uiScale={uiScale}
-      onUiScaleChange={(val) => {
-        setUiScale(val);
-        localStorage.setItem('gridstudio_ui_scale', val);
-        document.body.style.zoom = val / 100;
-      }}
+      uiScale={100}  // 从 localStorage 读取，此处简化
+      onUiScaleChange={(val) => localStorage.setItem('gridstudio_ui_scale', val)}
       onClearCache={handleClearCache}
       onResetSettings={handleResetSettings}
     />

@@ -1,35 +1,57 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { useTranslation } from '../lib/i18n';
 
 export default function MenuBar({
   onNewProject, onImportMidi, onExportMidi, onSaveProject, onLoadProject,
   onOpenMidiInfo, onUndo, onRedo, onQuantize, onClearTrack,
-  onOpenSettings, onToggleMode, onFullscreen, mode
+  onOpenSettings, onToggleMode, onFullscreen, mode, onExitToHome,
+  lang = 'zh',
 }) {
+  const [activeMenu, setActiveMenu] = useState(null);
+  const t = useTranslation(lang);
+
+  const handleMenuClick = (menuName) => {
+    setActiveMenu(activeMenu === menuName ? null : menuName);
+  };
+
+  const handleMenuBlur = () => {
+    setTimeout(() => setActiveMenu(null), 200);
+  };
+
+  const handleItemClick = (callback) => {
+    callback();
+    setActiveMenu(null);
+  };
+
   return (
-    <div className="menu-bar">
-      <div className="menu-item">文件
+    <div className="menu-bar" onBlur={handleMenuBlur}>
+      <div className={`menu-item ${activeMenu === 'file' ? 'active' : ''}`} onClick={() => handleMenuClick('file')}>
+        {t.file}
         <div className="menu-dropdown">
-          <a onClick={onNewProject}>新建工程</a>
-          <a onClick={onImportMidi}>导入 MIDI</a>
-          <a onClick={onExportMidi}>导出 MIDI</a>
-          <a onClick={onSaveProject}>保存工程</a>
-          <a onClick={onLoadProject}>加载工程</a>
+          <a onClick={() => handleItemClick(onNewProject)}>{t.newProject}</a>
+          <a onClick={() => handleItemClick(onImportMidi)}>{t.importMidi}</a>
+          <a onClick={() => handleItemClick(onExportMidi)}>{t.exportMidi}</a>
+          <a onClick={() => handleItemClick(onSaveProject)}>{t.saveProject}</a>
+          <a onClick={() => handleItemClick(onLoadProject)}>{t.loadProject}</a>
+          <a onClick={() => handleItemClick(onExitToHome)}>{t.backToHome}</a>
         </div>
       </div>
-      <div className="menu-item">编辑
+      <div className={`menu-item ${activeMenu === 'edit' ? 'active' : ''}`} onClick={() => handleMenuClick('edit')}>
+        {t.edit}
         <div className="menu-dropdown">
-          <a onClick={onUndo}>撤销</a>
-          <a onClick={onRedo}>重做</a>
-          <a onClick={onQuantize}>量化当前轨道</a>
-          <a onClick={onClearTrack}>清空当前轨道</a>
-          <a onClick={onOpenMidiInfo}>MIDI 信息</a>
+          <a onClick={() => handleItemClick(onUndo)}>{t.undo}</a>
+          <a onClick={() => handleItemClick(onRedo)}>{t.redo}</a>
+          <a onClick={() => handleItemClick(onQuantize)}>{t.quantizeTrack}</a>
+          <a onClick={() => handleItemClick(onClearTrack)}>{t.clearTrack}</a>
+          <a onClick={() => handleItemClick(onOpenMidiInfo)}>{t.midiInfo}</a>
         </div>
       </div>
-      <div className="menu-item">设置
+      <div className={`menu-item ${activeMenu === 'settings' ? 'active' : ''}`} onClick={() => handleMenuClick('settings')}>
+        {t.settings}
         <div className="menu-dropdown">
-          <a onClick={onOpenSettings}>选项面板</a>
-          <a onClick={onToggleMode}>{mode === 'desktop' ? '触屏模式' : '桌面模式'}</a>
-          <a onClick={onFullscreen}>全屏</a>
+          <a onClick={() => handleItemClick(onOpenSettings)}>{t.optionsPanel}</a>
+          <a onClick={() => handleItemClick(onToggleMode)}>{mode === 'desktop' ? t.touchMode : t.desktopMode}</a>
+          <a onClick={() => handleItemClick(onFullscreen)}>{t.fullscreen}</a>
         </div>
       </div>
     </div>
