@@ -29,7 +29,6 @@ body {
   overflow: hidden;
 }
 
-/* 滚动条 */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -133,7 +132,6 @@ input[type="range"]::-webkit-slider-thumb {
   border-radius: 2px;
 }
 
-/* 菜单栏等布局样式保持不变，只需替换颜色变量 */
 .menu-bar {
   background: var(--panel);
   border-bottom: 1px solid var(--border);
