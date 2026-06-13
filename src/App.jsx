@@ -1,123 +1,109 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { parseMidiFile, generateMidiFile } from './lib/midi';
-import { useProject } from './hooks/useProject';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useProject, loadAutosave, clearAutosave, addRecentProject, getRecentProjects } from './hooks/useProject';
 import { useAudioEngine } from './hooks/useAudioEngine';
-import MenuBar from './components/MenuBar';
-import TrackPanel from './components/TrackPanel';
-import PianoRoll from './components/PianoRoll';
-import Transport from './components/Transport';
-import SettingsModal from './components/SettingsModal';
+import { useAutoSave } from './hooks/useAutoSave';
+import HomePage from './components/HomePage';
+import Editor from './components/Editor';
+import { parseMidiFile, generateMidiFile } from './lib/midi';
 
 export default function App() {
-  const {
-    tracks, currentTrackId, bpm, meta,
-    setBpm, setMeta,
-    addTrack, deleteTrack, updateTrack,
-    addNote, deleteNote, updateNote,
-    quantizeTrack, clearTrack,
-    importMidiData, exportProject, importProject,
-    undo, redo,
-    setCurrentTrackId,
-  } = useProject();
-
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [totalDuration, setTotalDuration] = useState(0);
+  const [showHome, setShowHome] = useState(true);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [pendingAutosave, setPendingAutosave] = useState(null);
+  const [recentProjects, setRecentProjects] = useState([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mode, setMode] = useState('desktop');
 
+  // 核心工程状态
+  const project = useProject();
   const audioEngine = useAudioEngine();
-  const { playNote, setSoundSource, soundSource, loadInstrument } = audioEngine;
 
-  const playIntervalRef = useRef(null);
-  const startTimeRef = useRef(0);
-  const scheduledEventsRef = useRef([]);
+  // 自动保存设置（从 localStorage 读取）
+  const [autoSaveMode, setAutoSaveMode] = useState(() => {
+    const saved = localStorage.getItem('gridstudio_autosave_mode');
+    return saved ? JSON.parse(saved) : { type: 'onChange', interval: 0 };
+  });
 
-  // 停止播放
-  const stopPlayback = useCallback(() => {
-    if (playIntervalRef.current) clearInterval(playIntervalRef.current);
-    setIsPlaying(false);
-    setCurrentTime(0);
-    // 停止所有正在发声的音符（简单粗暴地关闭 AudioContext 中的所有节点，但为了安全，重新初始化）
-    if (audioEngine.audioCtxRef.current) {
-      // 不直接 close，只是暂停
-    }
-  }, [audioEngine]);
+  const { triggerAutoSave } = useAutoSave(project.getCurrentProjectData, autoSaveMode);
 
-  // 开始播放
-  const startPlayback = useCallback(async () => {
-    if (isPlaying) stopPlayback();
-    await audioEngine.initAudio();
-    const ctx = audioEngine.audioCtxRef.current;
-    if (ctx.state === 'suspended') await ctx.resume();
-
-    // 收集所有音符事件
-    let events = [];
-    tracks.forEach(track => {
-      if (track.mute) return;
-      track.notes.forEach(note => {
-        events.push({
-          time: note.startSec,
-          duration: note.durationSec,
-          pitch: note.pitch,
-          velocity: note.velocity,
-          program: track.program,
-        });
-      });
-    });
-    events.sort((a, b) => a.time - b.time);
-    const total = events.length ? Math.max(...events.map(e => e.time + e.duration)) : 0;
-    setTotalDuration(total);
-    if (total === 0) return;
-
-    const startTime = ctx.currentTime;
-    startTimeRef.current = startTime;
-    setIsPlaying(true);
-
-    // 调度音符
-    for (const ev of events) {
-      const timeoutId = setTimeout(() => {
-        if (isPlaying) {
-          // 使用 soundfont-player 播放，如果不可用则回退到振荡器
-          audioEngine.playNote(ev.pitch, ev.duration, ev.velocity, ev.program);
-        }
-      }, (ev.time) * 1000);
-      scheduledEventsRef.current.push(timeoutId);
-    }
-
-    // 进度更新
-    playIntervalRef.current = setInterval(() => {
-      if (!isPlaying) return;
-      const elapsed = ctx.currentTime - startTime;
-      setCurrentTime(Math.min(elapsed, total));
-      if (elapsed >= total) {
-        stopPlayback();
-      }
-    }, 50);
-  }, [tracks, isPlaying, audioEngine, stopPlayback]);
-
-  // 清理定时器
+  // 监听工程变化，标记未保存并触发自动保存
   useEffect(() => {
-    return () => {
-      if (playIntervalRef.current) clearInterval(playIntervalRef.current);
-      scheduledEventsRef.current.forEach(tid => clearTimeout(tid));
+    setHasUnsavedChanges(true);
+    triggerAutoSave();
+  }, [project.tracks, project.bpm, project.meta, project.currentTrackId]);
+
+  // 页面关闭警告
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (hasUnsavedChanges) {
+        e.preventDefault();
+        e.returnValue = '你有未保存的工程，确定要离开吗？更改将丢失。';
+        return e.returnValue;
+      }
     };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasUnsavedChanges]);
+
+  // 检查自动保存的工程
+  useEffect(() => {
+    const autosaveData = loadAutosave();
+    if (autosaveData && autosaveData.tracks?.length) {
+      setPendingAutosave(autosaveData);
+    }
+    setRecentProjects(getRecentProjects());
   }, []);
 
-  // 处理 MIDI 导入
+  const handleRecoverAutosave = () => {
+    if (pendingAutosave) {
+      project.importMidiData(pendingAutosave);
+      setHasUnsavedChanges(false);
+      clearAutosave();
+      setPendingAutosave(null);
+      setShowHome(false);
+    }
+  };
+
+  const handleDiscardAutosave = () => {
+    clearAutosave();
+    setPendingAutosave(null);
+    setShowHome(false);
+    project.newProject();
+  };
+
+  const handleNewProject = () => {
+    if (hasUnsavedChanges && !confirm('新建工程将丢失未保存的更改，确定吗？')) return;
+    setHasUnsavedChanges(false);
+    setShowHome(false);
+    project.newProject();
+  };
+
   const handleImportMidi = async (file) => {
     try {
       const arrayBuffer = await file.arrayBuffer();
       const midiData = await parseMidiFile(arrayBuffer);
-      importMidiData(midiData);
+      project.importMidiData(midiData);
+      setHasUnsavedChanges(false);
+      setShowHome(false);
     } catch (err) {
-      alert("导入 MIDI 失败: " + err.message);
+      alert('导入 MIDI 失败: ' + err.message);
     }
   };
 
-  // 导出 MIDI
+  const handleImportProject = (jsonData) => {
+    project.importProject(jsonData);
+    setHasUnsavedChanges(false);
+    setShowHome(false);
+  };
+
+  const handleLoadRecent = (projectData) => {
+    project.importMidiData(projectData);
+    setHasUnsavedChanges(false);
+    setShowHome(false);
+  };
+
   const handleExportMidi = () => {
-    const fileData = generateMidiFile(tracks, bpm, meta);
+    const fileData = generateMidiFile(project.tracks, project.bpm, project.meta);
     const blob = new Blob([fileData], { type: 'audio/midi' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -127,113 +113,90 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  // 新建工程
-  const handleNewProject = () => {
-    if (confirm("新建工程将丢失当前进度，是否继续？")) {
-      // 重置所有状态
-      importMidiData({ bpm: 120, tracks: [{ name: "Piano", program: 0, notes: [] }], title: "", copyright: "" });
-    }
+  const handleSaveProject = () => {
+    project.exportProject();
+    setHasUnsavedChanges(false);
   };
 
-  // 全屏
+  const handleLoadProjectFile = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = (e) => {
+      if (e.target.files[0]) {
+        const reader = new FileReader();
+        reader.onload = (ev) => handleImportProject(ev.target.result);
+        reader.readAsText(e.target.files[0]);
+      }
+    };
+    input.click();
+  };
+
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) document.documentElement.requestFullscreen();
     else document.exitFullscreen();
   };
 
-  // 当前轨道对象
-  const currentTrack = tracks.find(t => t.id === currentTrackId);
+  if (pendingAutosave) {
+    return (
+      <div style={{
+        position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+        background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000
+      }}>
+        <div style={{ background: '#2a2a3a', padding: '24px', borderRadius: '16px', maxWidth: '400px', textAlign: 'center' }}>
+          <h3>你有旧工程尚未保存</h3>
+          <p>是否要恢复工程以保存或继续修改？</p>
+          <div style={{ display: 'flex', gap: '16px', marginTop: '20px', justifyContent: 'center' }}>
+            <button onClick={handleRecoverAutosave}>恢复工程</button>
+            <button onClick={handleDiscardAutosave}>放弃</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-  return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <MenuBar
+  if (showHome) {
+    return (
+      <HomePage
         onNewProject={handleNewProject}
         onImportMidi={() => {
           const input = document.createElement('input');
           input.type = 'file';
           input.accept = '.mid,.midi';
-          input.onchange = (e) => {
-            if (e.target.files[0]) handleImportMidi(e.target.files[0]);
-          };
+          input.onchange = (e) => e.target.files[0] && handleImportMidi(e.target.files[0]);
           input.click();
         }}
-        onExportMidi={handleExportMidi}
-        onSaveProject={exportProject}
-        onLoadProject={() => {
-          const input = document.createElement('input');
-          input.type = 'file';
-          input.accept = '.json';
-          input.onchange = (e) => {
-            if (e.target.files[0]) {
-              const reader = new FileReader();
-              reader.onload = (ev) => importProject(ev.target.result);
-              reader.readAsText(e.target.files[0]);
-            }
-          };
-          input.click();
-        }}
-        onOpenSettings={() => setSettingsOpen(true)}
-        onToggleMode={() => setMode(mode === 'desktop' ? 'touch' : 'desktop')}
-        onFullscreen={toggleFullscreen}
-        mode={mode}
-        onUndo={undo}
-        onRedo={redo}
-        onQuantize={() => quantizeTrack(currentTrackId)}
-        onClearTrack={() => clearTrack(currentTrackId)}
+        onImportProject={handleLoadProjectFile}
+        recentProjects={recentProjects}
+        onLoadRecent={handleLoadRecent}
       />
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', padding: 8, gap: 8 }}>
-        <TrackPanel
-          tracks={tracks}
-          currentTrackId={currentTrackId}
-          onSelectTrack={setCurrentTrackId}
-          onAddTrack={addTrack}
-          onDeleteTrack={deleteTrack}
-          onVolumeChange={(id, vol) => updateTrack(id, { volume: vol })}
-          onPanChange={(id, pan) => updateTrack(id, { pan })}
-          onMuteToggle={(id) => {
-            const track = tracks.find(t => t.id === id);
-            updateTrack(id, { mute: !track.mute });
-          }}
-          onProgramChange={(id, prog) => updateTrack(id, { program: prog })}
-        />
-        {currentTrack && (
-          <PianoRoll
-            track={currentTrack}
-            onNotesChange={(newNotes) => updateTrack(currentTrackId, { notes: newNotes })}
-            playNote={(pitch, duration, velocity) => playNote(pitch, duration, velocity, currentTrack.program)}
-            isPlaying={isPlaying}
-            currentTime={currentTime}
-          />
-        )}
-      </div>
-      <Transport
-        bpm={bpm}
-        onBpmChange={setBpm}
-        isPlaying={isPlaying}
-        onPlay={startPlayback}
-        onStop={stopPlayback}
-        currentTime={currentTime}
-        totalDuration={totalDuration}
-        onSeek={(time) => {
-          // 跳转播放暂不实现复杂逻辑，简单停止并重置时间
-          stopPlayback();
-          setCurrentTime(time);
-        }}
-        reverbSend={audioEngine.reverbSend}
-        onReverbSendChange={(val) => audioEngine.setReverbSend(val)}
-        delaySend={audioEngine.delaySend}
-        onDelaySendChange={(val) => audioEngine.setDelaySend(val)}
-      />
-      <SettingsModal
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        uiScale={100}
-        onUiScaleChange={() => {}}
-        soundSource={soundSource}
-        onSoundSourceChange={setSoundSource}
-        meta={meta}
-        onMetaChange={setMeta}
-      />
-    </div>
+    );
+  }
+
+  return (
+    <Editor
+      project={project}
+      audioEngine={audioEngine}
+      autoSaveMode={autoSaveMode}
+      setAutoSaveMode={setAutoSaveMode}
+      onExitToHome={() => {
+        if (hasUnsavedChanges && !confirm('返回主页将丢失未保存的更改，确定吗？')) return;
+        setShowHome(true);
+      }}
+      onOpenSettings={() => setSettingsOpen(true)}
+      onExportMidi={handleExportMidi}
+      onSaveProject={handleSaveProject}
+      onLoadProject={handleLoadProjectFile}
+      onNewProject={handleNewProject}
+      onToggleMode={() => setMode(mode === 'desktop' ? 'touch' : 'desktop')}
+      onFullscreen={toggleFullscreen}
+      mode={mode}
+      settingsOpen={settingsOpen}
+      setSettingsOpen={setSettingsOpen}
+      soundSource={audioEngine.soundSource}
+      setSoundSource={audioEngine.setSoundSource}
+      meta={project.meta}
+      setMeta={project.setMeta}
+    />
   );
 }
