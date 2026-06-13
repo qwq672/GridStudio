@@ -1,12 +1,16 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 
 let nextId = 1;
 function generateId() { return nextId++; }
 
 // 本地存储键名
-const AUTOSAVE_KEY = 'gridstudio_autosave';
-const RECENT_PROJECTS_KEY = 'gridstudio_recent_projects';
-const SETTINGS_KEY = 'gridstudio_settings';
+export const AUTOSAVE_KEY = 'gridstudio_autosave';
+export const RECENT_PROJECTS_KEY = 'gridstudio_recent_projects';
+
+// 保存自动保存的工程
+export function saveAutosave(project) {
+  localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(project));
+}
 
 // 加载自动保存的工程
 export function loadAutosave() {
@@ -14,17 +18,18 @@ export function loadAutosave() {
   return data ? JSON.parse(data) : null;
 }
 
-// 保存自动保存的工程
-export function saveAutosave(project) {
-  localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(project));
-}
-
 // 清除自动保存的工程
 export function clearAutosave() {
   localStorage.removeItem(AUTOSAVE_KEY);
 }
 
-// 管理最近工程
+// 获取最近工程列表
+export function getRecentProjects() {
+  const data = localStorage.getItem(RECENT_PROJECTS_KEY);
+  return data ? JSON.parse(data) : [];
+}
+
+// 添加最近工程
 export function addRecentProject(project) {
   const recents = getRecentProjects();
   const existing = recents.find(p => p.id === project.id);
@@ -38,16 +43,13 @@ export function addRecentProject(project) {
   localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(recents));
 }
 
-export function getRecentProjects() {
-  const data = localStorage.getItem(RECENT_PROJECTS_KEY);
-  return data ? JSON.parse(data) : [];
-}
-
+// 删除单个最近工程
 export function removeRecentProject(id) {
   const recents = getRecentProjects().filter(p => p.id !== id);
   localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(recents));
 }
 
+// 清空所有最近工程
 export function clearAllRecentProjects() {
   localStorage.removeItem(RECENT_PROJECTS_KEY);
 }
@@ -61,9 +63,6 @@ export function useProject() {
   const [meta, setMeta] = useState({ title: "", artist: "", singer: "", copyright: "" });
   const [undoStack, setUndoStack] = useState([]);
   const [redoStack, setRedoStack] = useState([]);
-
-  // 自动保存触发器（由外部调用，例如在 useAutoSave 中监听变化后保存）
-  const onProjectChange = useRef(null);
 
   const pushUndo = useCallback(() => {
     setUndoStack(prev => [...prev, { tracks, bpm, meta, currentTrackId }]);
@@ -163,7 +162,7 @@ export function useProject() {
     setTracks(prev => prev.map(t => t.id === trackId ? { ...t, notes: [] } : t));
   }, [pushUndo]);
 
-  // 导入 MIDI 数据
+  // 导入 MIDI 数据（替换当前工程）
   const importMidiData = useCallback((midiData) => {
     pushUndo();
     const newTracks = midiData.tracks.map((t, idx) => ({
@@ -181,7 +180,7 @@ export function useProject() {
     setCurrentTrackId(newTracks[0]?.id);
   }, [pushUndo]);
 
-  // 导出工程 JSON
+  // 导出工程 JSON 文件
   const exportProject = useCallback(() => {
     const data = { tracks, bpm, meta };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -193,6 +192,7 @@ export function useProject() {
     URL.revokeObjectURL(url);
   }, [tracks, bpm, meta]);
 
+  // 导入工程 JSON 文件（替换当前）
   const importProject = useCallback((jsonData) => {
     pushUndo();
     const data = JSON.parse(jsonData);
@@ -208,7 +208,7 @@ export function useProject() {
     setTracks([{ id: generateId(), name: "Piano", program: 0, notes: [], volume: 80, pan: 64, mute: false }]);
     setBpm(120);
     setMeta({ title: "", artist: "", singer: "", copyright: "" });
-    setCurrentTrackId(1); // 新 ID
+    setCurrentTrackId(1); // 新生成的 id 是 1
   }, [pushUndo]);
 
   // 获取当前工程数据（用于自动保存）
@@ -217,13 +217,26 @@ export function useProject() {
   }, [tracks, bpm, meta, currentTrackId]);
 
   return {
-    tracks, currentTrackId, bpm, meta,
-    setBpm, setMeta,
-    addTrack, deleteTrack, updateTrack,
-    addNote, deleteNote, updateNote,
-    quantizeTrack, clearTrack,
-    importMidiData, exportProject, importProject, newProject,
-    undo, redo,
+    tracks,
+    currentTrackId,
+    bpm,
+    meta,
+    setBpm,
+    setMeta,
+    addTrack,
+    deleteTrack,
+    updateTrack,
+    addNote,
+    deleteNote,
+    updateNote,
+    quantizeTrack,
+    clearTrack,
+    importMidiData,
+    exportProject,
+    importProject,
+    newProject,
+    undo,
+    redo,
     setCurrentTrackId,
     getCurrentProjectData,
     pushUndo,

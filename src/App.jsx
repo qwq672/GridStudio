@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useProject, loadAutosave, clearAutosave, addRecentProject, getRecentProjects } from './hooks/useProject';
+import { useProject, loadAutosave, clearAutosave, getRecentProjects } from './hooks/useProject';
 import { useAudioEngine } from './hooks/useAudioEngine';
 import { useAutoSave } from './hooks/useAutoSave';
 import HomePage from './components/HomePage';
@@ -12,13 +12,13 @@ export default function App() {
   const [pendingAutosave, setPendingAutosave] = useState(null);
   const [recentProjects, setRecentProjects] = useState([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [midiInfoOpen, setMidiInfoOpen] = useState(false);
   const [mode, setMode] = useState('desktop');
 
-  // 核心工程状态
   const project = useProject();
   const audioEngine = useAudioEngine();
 
-  // 自动保存设置（从 localStorage 读取）
+  // 自动保存设置
   const [autoSaveMode, setAutoSaveMode] = useState(() => {
     const saved = localStorage.getItem('gridstudio_autosave_mode');
     return saved ? JSON.parse(saved) : { type: 'onChange', interval: 0 };
@@ -26,13 +26,11 @@ export default function App() {
 
   const { triggerAutoSave } = useAutoSave(project.getCurrentProjectData, autoSaveMode);
 
-  // 监听工程变化，标记未保存并触发自动保存
   useEffect(() => {
     setHasUnsavedChanges(true);
     triggerAutoSave();
   }, [project.tracks, project.bpm, project.meta, project.currentTrackId]);
 
-  // 页面关闭警告
   useEffect(() => {
     const handleBeforeUnload = (e) => {
       if (hasUnsavedChanges) {
@@ -45,7 +43,6 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [hasUnsavedChanges]);
 
-  // 检查自动保存的工程
   useEffect(() => {
     const autosaveData = loadAutosave();
     if (autosaveData && autosaveData.tracks?.length) {
@@ -137,6 +134,25 @@ export default function App() {
     else document.exitFullscreen();
   };
 
+  const handleClearCache = () => {
+    if (confirm('清空所有本地缓存工程将无法恢复，确定吗？')) {
+      localStorage.removeItem('gridstudio_autosave');
+      localStorage.removeItem('gridstudio_recent_projects');
+      setRecentProjects([]);
+      alert('缓存已清空');
+    }
+  };
+
+  const handleResetSettings = () => {
+    localStorage.removeItem('gridstudio_ui_scale');
+    localStorage.removeItem('gridstudio_sound_source');
+    localStorage.removeItem('gridstudio_autosave_mode');
+    setAutoSaveMode({ type: 'onChange', interval: 0 });
+    if (typeof onUiScaleChange === 'function') onUiScaleChange(100);
+    if (typeof onSoundSourceChange === 'function') onSoundSourceChange('default');
+    alert('设置已重置');
+  };
+
   if (pendingAutosave) {
     return (
       <div style={{
@@ -184,6 +200,7 @@ export default function App() {
         setShowHome(true);
       }}
       onOpenSettings={() => setSettingsOpen(true)}
+      onOpenMidiInfo={() => setMidiInfoOpen(true)}
       onExportMidi={handleExportMidi}
       onSaveProject={handleSaveProject}
       onLoadProject={handleLoadProjectFile}
@@ -193,10 +210,16 @@ export default function App() {
       mode={mode}
       settingsOpen={settingsOpen}
       setSettingsOpen={setSettingsOpen}
+      midiInfoOpen={midiInfoOpen}
+      setMidiInfoOpen={setMidiInfoOpen}
       soundSource={audioEngine.soundSource}
       setSoundSource={audioEngine.setSoundSource}
       meta={project.meta}
       setMeta={project.setMeta}
+      uiScale={100}  // 从 localStorage 读取，此处简化
+      onUiScaleChange={(val) => localStorage.setItem('gridstudio_ui_scale', val)}
+      onClearCache={handleClearCache}
+      onResetSettings={handleResetSettings}
     />
   );
 }
