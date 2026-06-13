@@ -5,9 +5,25 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+:root {
+  --bg: #1a1a1e;
+  --panel: #2a2a30;
+  --border: #3a3a42;
+  --text: #e0e0e0;
+  --text-muted: #a0a0a8;
+  --accent: #e08e3a;
+  --accent-hover: #c9782a;
+  --button-bg: #3a3a42;
+  --button-hover: #4a4a54;
+  --track-bg: #2a2a30;
+  --track-hover: #3a3a44;
+  --note-color: #e08e3a;
+  --playhead: rgba(224, 142, 58, 0.5);
+}
+
 body {
-  background: #1a1a2a;
-  color: #eee;
+  background: var(--bg);
+  color: var(--text);
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
   height: 100vh;
   overflow: hidden;
@@ -19,15 +35,15 @@ body {
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #2a2a3a;
+  background: var(--border);
 }
 ::-webkit-scrollbar-thumb {
-  background: #5a6eff;
+  background: var(--accent);
   border-radius: 3px;
 }
 
-button, .file-label {
-  background: #3a3a4e;
+button {
+  background: var(--button-bg);
   border: none;
   color: white;
   padding: 4px 10px;
@@ -39,16 +55,20 @@ button, .file-label {
   gap: 6px;
   transition: 0.1s;
 }
-button:hover, .file-label:hover {
-  background: #5a6eff;
+button:hover {
+  background: var(--accent);
 }
 button.primary {
-  background: #5a6eff;
+  background: var(--accent);
 }
+button.primary:hover {
+  background: var(--accent-hover);
+}
+
 input, select {
-  background: #2a2a3a;
-  color: white;
-  border: 1px solid #5a6eff;
+  background: var(--button-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
   border-radius: 20px;
   padding: 4px 8px;
   font-size: 0.75rem;
@@ -56,7 +76,18 @@ input, select {
 input[type="range"] {
   padding: 0;
   border: none;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
 }
+input[type="range"]::-webkit-slider-thumb {
+  background: var(--accent);
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
 .modal {
   position: fixed;
   top: 0;
@@ -77,18 +108,20 @@ input[type="range"] {
   opacity: 1;
 }
 .modal-content {
-  background: #2a2a3a;
+  background: var(--panel);
   border-radius: 12px;
   padding: 20px;
   max-width: 90%;
   max-height: 80%;
   overflow-y: auto;
   min-width: 320px;
+  border: 1px solid var(--border);
 }
+
 .progress-bar {
   width: 120px;
   height: 4px;
-  background: #3a3a4e;
+  background: var(--border);
   border-radius: 2px;
   cursor: pointer;
   position: relative;
@@ -96,26 +129,133 @@ input[type="range"] {
 .progress-fill {
   width: 0%;
   height: 100%;
-  background: #5a6eff;
+  background: var(--accent);
   border-radius: 2px;
 }
-.context-menu {
-  position: fixed;
-  background: #2a2a3a;
-  border: 1px solid #3a3a4e;
+
+/* 菜单栏等布局样式保持不变，只需替换颜色变量 */
+.menu-bar {
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  padding: 0 8px;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 12px;
+}
+.menu-item {
+  position: relative;
+  cursor: pointer;
+  padding: 8px 12px;
+}
+.menu-item:hover { background: var(--accent); }
+.menu-dropdown {
+  position: absolute;
+  top: 36px;
+  left: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  z-index: 1001;
+  min-width: 150px;
+  z-index: 200;
   display: none;
   flex-direction: column;
 }
-.context-menu a {
-  padding: 8px 16px;
+.menu-dropdown a {
+  padding: 6px 12px;
   cursor: pointer;
-  font-size: 0.8rem;
+  font-size: 0.75rem;
+}
+.menu-dropdown a:hover { background: var(--accent); }
+.menu-item.active .menu-dropdown { display: flex; }
+.mode-badge {
+  background: var(--accent);
+  padding: 4px 8px;
+  border-radius: 20px;
+  font-size: 0.7rem;
+}
+.workspace {
+  flex: 1;
   display: flex;
-  align-items: center;
+  overflow: hidden;
+  padding: 8px;
   gap: 8px;
 }
-.context-menu a:hover {
-  background: #5a6eff;
+.track-panel {
+  background: var(--panel);
+  border-radius: 8px;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.track-header {
+  padding: 8px;
+  font-weight: bold;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.track-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.track-card {
+  background: var(--track-bg);
+  padding: 6px;
+  cursor: pointer;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.track-card.selected {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.track-card .controls-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.piano-pane {
+  background: var(--panel);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.piano-roll {
+  flex: 1;
+  overflow: auto;
+  background: #1e1e22;
+  touch-action: pan-x pan-y;
+}
+canvas {
+  display: block;
+  cursor: crosshair;
+}
+.controls-bar {
+  padding: 6px;
+  display: flex;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+  align-items: center;
+  background: var(--panel);
+}
+.slider-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.7rem;
 }
