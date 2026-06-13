@@ -1,0 +1,121 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background: #1a1a2a;
+  color: #eee;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #2a2a3a;
+}
+::-webkit-scrollbar-thumb {
+  background: #5a6eff;
+  border-radius: 3px;
+}
+
+button, .file-label {
+  background: #3a3a4e;
+  border: none;
+  color: white;
+  padding: 4px 10px;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: 0.1s;
+}
+button:hover, .file-label:hover {
+  background: #5a6eff;
+}
+button.primary {
+  background: #5a6eff;
+}
+input, select {
+  background: #2a2a3a;
+  color: white;
+  border: 1px solid #5a6eff;
+  border-radius: 20px;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+}
+input[type="range"] {
+  padding: 0;
+  border: none;
+}
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0,0,0,0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  visibility: hidden;
+  opacity: 0;
+  transition: 0.2s;
+}
+.modal.active {
+  visibility: visible;
+  opacity: 1;
+}
+.modal-content {
+  background: #2a2a3a;
+  border-radius: 12px;
+  padding: 20px;
+  max-width: 90%;
+  max-height: 80%;
+  overflow-y: auto;
+  min-width: 320px;
+}
+.progress-bar {
+  width: 120px;
+  height: 4px;
+  background: #3a3a4e;
+  border-radius: 2px;
+  cursor: pointer;
+  position: relative;
+}
+.progress-fill {
+  width: 0%;
+  height: 100%;
+  background: #5a6eff;
+  border-radius: 2px;
+}
+.context-menu {
+  position: fixed;
+  background: #2a2a3a;
+  border: 1px solid #3a3a4e;
+  border-radius: 8px;
+  z-index: 1001;
+  display: none;
+  flex-direction: column;
+}
+.context-menu a {
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.context-menu a:hover {
+  background: #5a6eff;
+}
