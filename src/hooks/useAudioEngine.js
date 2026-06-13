@@ -14,8 +14,8 @@ export function useAudioEngine() {
   const delayFeedbackRef = useRef(null);
   const instrumentRef = useRef(null);
   const sf2DataRef = useRef(null);
-  const sf2BuffersRef = useRef({}); // 缓存SF2样本的AudioBuffer
-  const [soundSource, setSoundSource] = useState('default'); // 'default', 'network', 'sf2'
+  const sf2BuffersRef = useRef({});
+  const [soundSource, setSoundSource] = useState('default');
   const [reverbSend, setReverbSend] = useState(0.3);
   const [delaySend, setDelaySend] = useState(0.2);
   const [delayTime, setDelayTime] = useState(0.3);
@@ -28,27 +28,28 @@ export function useAudioEngine() {
   const scheduledEventsRef = useRef([]);
   const isPlayingRef = useRef(false);
   const noiseBufferRef = useRef(null);
+  // 复用的效果发送节点
+  const reverbSendGainRef = useRef(null);
+  const delaySendGainRef = useRef(null);
+  const dryGainNodeRef = useRef(null);
 
   const initAudio = async () => {
     if (audioCtxRef.current) return audioCtxRef.current;
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     audioCtxRef.current = ctx;
 
-    // 主输出
     const master = ctx.createGain();
     master.gain.value = 0.8;
     master.connect(ctx.destination);
     masterGainRef.current = master;
 
-    // 干信号
     const dry = ctx.createGain();
     dry.gain.value = 0.7;
     dry.connect(master);
     dryGainRef.current = dry;
 
-    // 混响 - 使用ConvolverNode实现真实混响
     const convolver = ctx.createConvolver();
-    convolver.buffer = generateReverbIR(ctx, 2.5, 2.0); // 2.5秒衰减
+    convolver.buffer = generateReverbIR(ctx, 2.5, 2.0);
     convolverRef.current = convolver;
 
     const reverbGain = ctx.createGain();
@@ -57,7 +58,6 @@ export function useAudioEngine() {
     reverbGain.connect(master);
     wetReverbGainRef.current = reverbGain;
 
-    // 延迟 - 使用DelayNode + 反馈回路
     const delayNode = ctx.createDelay(5.0);
     delayNode.delayTime.value = delayTime;
     delayNodeRef.current = delayNode;
@@ -70,14 +70,11 @@ export function useAudioEngine() {
     delayGain.gain.value = delaySend;
     wetDelayGainRef.current = delayGain;
 
-    // 延迟回路: delay -> feedback -> delay (形成回声)
     delayNode.connect(feedbackGain);
     feedbackGain.connect(delayNode);
-    // 延迟输出 -> wet gain -> master
     delayNode.connect(delayGain);
     delayGain.connect(master);
 
-    // 创建噪声缓冲区（用于打击乐）
     const noiseBuffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
     const noiseData = noiseBuffer.getChannelData(0);
     for (let i = 0; i < noiseData.length; i++) {
@@ -85,10 +82,25 @@ export function useAudioEngine() {
     }
     noiseBufferRef.current = noiseBuffer;
 
+    // 创建复用的效果发送节点
+    const reverbSendGain = ctx.createGain();
+    reverbSendGain.gain.value = 1.0;
+    reverbSendGain.connect(convolver);
+    reverbSendGainRef.current = reverbSendGain;
+
+    const delaySendGain = ctx.createGain();
+    delaySendGain.gain.value = 1.0;
+    delaySendGain.connect(delayNode);
+    delaySendGainRef.current = delaySendGain;
+
+    const dryGainNode = ctx.createGain();
+    dryGainNode.gain.value = 1.0;
+    dryGainNode.connect(dry);
+    dryGainNodeRef.current = dryGainNode;
+
     return ctx;
   };
 
-  // 生成混响脉冲响应
   function generateReverbIR(ctx, duration, decay) {
     const sampleRate = ctx.sampleRate;
     const length = sampleRate * duration;
@@ -97,7 +109,6 @@ export function useAudioEngine() {
     for (let channel = 0; channel < 2; channel++) {
       const data = buffer.getChannelData(channel);
       for (let i = 0; i < length; i++) {
-        // 指数衰减的随机噪声
         const t = i / length;
         const envelope = Math.pow(1 - t, decay);
         data[i] = (Math.random() * 2 - 1) * envelope;
@@ -106,57 +117,27 @@ export function useAudioEngine() {
     return buffer;
   }
 
-  // 连接振荡器到效果器链
-  function connectToEffects(node, ctx) {
-    // 干信号
-    const dryNode = ctx.createGain();
-    dryNode.gain.value = 1.0;
-    node.connect(dryNode);
-    dryNode.connect(dryGainRef.current);
-
-    // 混响发送
-    const reverbSendNode = ctx.createGain();
-    reverbSendNode.gain.value = 1.0;
-    node.connect(reverbSendNode);
-    reverbSendNode.connect(convolverRef.current);
-
-    // 延迟发送
-    const delaySendNode = ctx.createGain();
-    delaySendNode.gain.value = 1.0;
-    node.connect(delaySendNode);
-    delaySendNode.connect(delayNodeRef.current);
-  }
-
-  // 应用ADSR包络 - 修复爆音问题
   function applyEnvelope(gainNode, ctx, preset, vol, duration) {
     const now = ctx.currentTime;
     const { attack = 0.01, decay = 0.1, sustain = 0.5, release = 0.3 } = preset;
     
-    // 确保音量不会太大导致削波
     const safeVol = Math.min(vol, 0.4);
+    const timeConstant = 0.003;
     
-    // 使用setTargetAtTime实现更平滑的增益变化，避免爆音
-    const timeConstant = 0.003; // 3ms时间常数
-    
-    // Attack - 使用指数曲线避免click
     gainNode.gain.setValueAtTime(0.0001, now);
     gainNode.gain.setTargetAtTime(safeVol, now, timeConstant);
     
-    // Decay -> Sustain
     const decayEnd = now + attack + decay;
     gainNode.gain.setTargetAtTime(safeVol * Math.max(sustain, 0.001), decayEnd, timeConstant);
     
-    // 保持 sustain 直到 note off
     const noteEnd = now + duration;
     gainNode.gain.setValueAtTime(safeVol * Math.max(sustain, 0.001), noteEnd);
     
-    // Release - 使用指数衰减
     gainNode.gain.setTargetAtTime(0.0001, noteEnd, timeConstant);
     
     return noteEnd + release + 0.1;
   }
 
-  // 使用多层谐波合成音色
   function playSynthNote(pitch, duration, velocity, program) {
     const ctx = audioCtxRef.current;
     if (!ctx) return;
@@ -166,19 +147,14 @@ export function useAudioEngine() {
     const freq = 440 * Math.pow(2, (midi - 69) / 12);
     const vol = (velocity / 127) * 0.3;
 
-    // 打击乐使用噪声合成
     if (preset.isDrum) {
       playDrumSound(preset, vol, duration);
       return;
     }
 
-    // 主增益节点
     const masterGain = ctx.createGain();
-    
-    // 应用ADSR包络
     const totalDuration = applyEnvelope(masterGain, ctx, preset, vol, duration);
 
-    // 多层谐波叠加
     const harmonics = preset.harmonics || [1];
     const oscillators = [];
     
@@ -187,9 +163,7 @@ export function useAudioEngine() {
       const osc = ctx.createOscillator();
       const harmGain = ctx.createGain();
       
-      // 基频或谐波频率
       osc.frequency.value = freq * (idx + 1);
-      // 轻微失谐使声音更自然
       osc.detune.value = (Math.random() - 0.5) * 6;
       
       harmGain.gain.value = amp * 0.5;
@@ -200,7 +174,6 @@ export function useAudioEngine() {
       oscillators.push(osc);
     });
 
-    // 如果没有谐波定义，使用单振荡器
     if (harmonics.length <= 1) {
       const osc = ctx.createOscillator();
       osc.type = preset.type || 'sine';
@@ -210,16 +183,18 @@ export function useAudioEngine() {
       oscillators.push(osc);
     }
 
-    // 低通滤波器使声音更柔和
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
     filter.frequency.value = Math.min(freq * 6, 12000);
     filter.Q.value = 0.7;
     
     masterGain.connect(filter);
-    connectToEffects(filter, ctx);
+    
+    // 连接到复用的效果节点
+    filter.connect(dryGainNodeRef.current);
+    filter.connect(reverbSendGainRef.current);
+    filter.connect(delaySendGainRef.current);
 
-    // 启动和停止
     const stopTime = ctx.currentTime + totalDuration;
     oscillators.forEach(osc => {
       osc.start();
@@ -227,7 +202,6 @@ export function useAudioEngine() {
     });
   }
 
-  // 打击乐噪声合成 - 修复爆音
   function playDrumSound(preset, vol, duration) {
     const ctx = audioCtxRef.current;
     if (!ctx) return;
@@ -235,12 +209,10 @@ export function useAudioEngine() {
 
     const { attack = 0.001, decay = 0.05, release = 0.05, freq, isCymbal, isMetallic, isShaker } = preset;
     
-    // 限制音量避免爆音
     const safeVol = Math.min(vol, 0.4);
     const timeConstant = 0.002;
 
     if (isShaker) {
-      // 沙锤 - 高通滤波噪声
       const source = ctx.createBufferSource();
       source.buffer = noiseBufferRef.current;
       
@@ -255,14 +227,14 @@ export function useAudioEngine() {
       
       source.connect(hpf);
       hpf.connect(gain);
-      connectToEffects(gain, ctx);
+      gain.connect(dryGainNodeRef.current);
+      gain.connect(reverbSendGainRef.current);
       source.start(now);
       source.stop(now + decay + release + 0.05);
       return;
     }
 
     if (isCymbal || isMetallic) {
-      // 镲/金属 - 带通滤波噪声 + 高频振荡器
       const noiseSource = ctx.createBufferSource();
       noiseSource.buffer = noiseBufferRef.current;
       
@@ -278,29 +250,27 @@ export function useAudioEngine() {
       
       noiseSource.connect(bpf);
       bpf.connect(gain);
-      connectToEffects(gain, ctx);
+      gain.connect(dryGainNodeRef.current);
+      gain.connect(reverbSendGainRef.current);
       noiseSource.start(now);
       noiseSource.stop(now + decay + release + 0.2);
 
       if (isMetallic) {
-        // 添加金属振荡器
         const osc = ctx.createOscillator();
-        osc.type = 'sine'; // 改用sine避免刺耳
+        osc.type = 'sine';
         osc.frequency.value = freq || 2000;
         const oscGain = ctx.createGain();
         oscGain.gain.setValueAtTime(0.0001, now);
         oscGain.gain.setTargetAtTime(safeVol * 0.1, now + attack, timeConstant);
         oscGain.gain.setTargetAtTime(0.0001, now + release + 0.1, timeConstant);
         osc.connect(oscGain);
-        connectToEffects(oscGain, ctx);
+        oscGain.connect(dryGainNodeRef.current);
         osc.start(now);
         osc.stop(now + release + 0.2);
       }
       return;
     }
 
-    // 鼓声 - 噪声 + 低频正弦波（音高下降）
-    // 噪声层（鼓皮冲击）
     const noiseSource = ctx.createBufferSource();
     noiseSource.buffer = noiseBufferRef.current;
     
@@ -316,11 +286,11 @@ export function useAudioEngine() {
     
     noiseSource.connect(noiseFilter);
     noiseFilter.connect(noiseGain);
-    connectToEffects(noiseGain, ctx);
+    noiseGain.connect(dryGainNodeRef.current);
+    noiseGain.connect(reverbSendGainRef.current);
     noiseSource.start(now);
     noiseSource.stop(now + decay + 0.1);
 
-    // 音高层（鼓体共振）- 频率从高频滑向低频
     const bodyFreq = freq || 150;
     const osc = ctx.createOscillator();
     osc.type = 'sine';
@@ -333,12 +303,12 @@ export function useAudioEngine() {
     bodyGain.gain.setTargetAtTime(0.0001, now + decay + release + 0.05, timeConstant);
     
     osc.connect(bodyGain);
-    connectToEffects(bodyGain, ctx);
+    bodyGain.connect(dryGainNodeRef.current);
+    bodyGain.connect(reverbSendGainRef.current);
     osc.start(now);
     osc.stop(now + decay + release + 0.1);
   }
 
-  // 播放SF2样本
   function playSF2Sample(pitch, duration, velocity, program) {
     const ctx = audioCtxRef.current;
     if (!ctx || !sf2DataRef.current) {
@@ -350,14 +320,12 @@ export function useAudioEngine() {
     const vol = (velocity / 127) * 0.5;
     const presets = sf2DataRef.current.presets;
     
-    // 查找对应program的preset
     const preset = presets.find(p => p.program === program) || presets[0];
     if (!preset || !preset.samples || preset.samples.length === 0) {
       playSynthNote(pitch, duration, velocity, program);
       return;
     }
 
-    // 找到最接近的样本
     let bestSample = preset.samples[0];
     let minDist = Infinity;
     for (const sample of preset.samples) {
@@ -377,7 +345,6 @@ export function useAudioEngine() {
     const source = ctx.createBufferSource();
     source.buffer = bestSample.buffer;
     
-    // 计算播放速率（根据音高差异）
     const rootKey = bestSample.rootKey || 60;
     const pitchDiff = midi - rootKey;
     source.playbackRate.value = Math.pow(2, pitchDiff / 12);
@@ -389,7 +356,9 @@ export function useAudioEngine() {
     gain.gain.linearRampToValueAtTime(0.0001, now + duration + 0.05);
 
     source.connect(gain);
-    connectToEffects(gain, ctx);
+    gain.connect(dryGainNodeRef.current);
+    gain.connect(reverbSendGainRef.current);
+    gain.connect(delaySendGainRef.current);
     
     source.start(now);
     source.stop(now + duration + 0.1);
@@ -410,14 +379,12 @@ export function useAudioEngine() {
     }
   };
 
-  // 加载SF2文件
   const loadSF2 = async (arrayBuffer) => {
     await initAudio();
     try {
       const sf2Data = parseSF2(arrayBuffer);
       sf2DataRef.current = sf2Data;
       
-      // 解码所有样本
       const ctx = audioCtxRef.current;
       const decodedBuffers = {};
       
@@ -436,10 +403,10 @@ export function useAudioEngine() {
       }
       sf2BuffersRef.current = decodedBuffers;
       setSoundSource('sf2');
-      return true;
+      return { success: true, name: sf2Data.name || 'SF2' };
     } catch (err) {
       console.error('SF2 load failed:', err);
-      return false;
+      return { success: false, name: '' };
     }
   };
 

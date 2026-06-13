@@ -238,7 +238,7 @@ export default function TrackPanel({
                 <div style={{ marginBottom: 8 }}>
                   <input
                     type="text"
-                    placeholder="搜索乐器号、中文名或英文名..."
+                    placeholder={t.searchInstrument}
                     value={searchQuery[track.id] || ''}
                     onChange={(e) => setSearchQuery(prev => ({ ...prev, [track.id]: e.target.value }))}
                     style={{ width: '100%', padding: '4px 8px', fontSize: '0.75rem' }}
@@ -270,7 +270,7 @@ export default function TrackPanel({
                           fontSize: '0.7rem'
                         }}
                       >
-                        试听
+                        {t.preview}
                       </button>
                     </div>
                   ))}

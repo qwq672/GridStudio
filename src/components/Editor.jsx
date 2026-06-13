@@ -91,6 +91,7 @@ export default function Editor({
         onRedo={redo}
         onQuantize={() => quantizeTrack(currentTrackId)}
         onClearTrack={() => clearTrack(currentTrackId)}
+        lang={lang}
       />
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden', padding: 8, gap: 8, minHeight: 0 }}>
         <TrackPanel
@@ -107,6 +108,7 @@ export default function Editor({
           }}
           onProgramChange={(id, prog) => updateTrack(id, { program: prog })}
           playNote={playNote}
+          lang={lang}
         />
         {currentTrack && (
           <PianoRoll
@@ -115,6 +117,7 @@ export default function Editor({
             playNote={(pitch, duration, velocity) => playNote(pitch, duration, velocity, currentTrack.program)}
             isPlaying={audioEngine.isPlaying}
             currentTime={audioEngine.currentTime}
+            lang={lang}
           />
         )}
       </div>
@@ -159,6 +162,7 @@ export default function Editor({
         onClose={() => setMidiInfoOpen(false)}
         meta={meta}
         onMetaChange={setMeta}
+        lang={lang}
       />
     </div>
   );

@@ -4,8 +4,8 @@ let nextId = 1;
 function generateId() { return nextId++; }
 
 // 本地存储键名
-export const AUTOSAVE_KEY = 'gridstudio_autosave';
-export const RECENT_PROJECTS_KEY = 'gridstudio_recent_projects';
+export const AUTOSAVE_KEY = 'arvgrid_autosave';
+export const RECENT_PROJECTS_KEY = 'arvgrid_recent_projects';
 
 // 保存自动保存的工程
 export function saveAutosave(project) {
@@ -187,7 +187,7 @@ export function useProject() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'gridstudio_project.json';
+    a.download = 'arvgrid_project.json';
     a.click();
     URL.revokeObjectURL(url);
   }, [tracks, bpm, meta]);

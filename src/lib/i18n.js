@@ -17,7 +17,8 @@ export const translations = {
     deleteNote: '删除音符', copyNotes: '复制', cutNotes: '裁切', pasteNotes: '粘贴',
     selectAll: '全选', deleteSelected: '删除选中',
     // Transport
-    play: '播放', stop: '停止', reverb: '混响', delay: '延迟',
+    play: '播放', stop: '停止', pause: '暂停', metronome: '节拍器',
+    reverb: '混响', delay: '延迟',
     delayTime: '延迟时间', delayFeedback: '反馈',
     // Settings
     uiScale: '界面缩放', soundSource: '音色库',
@@ -54,7 +55,8 @@ export const translations = {
     zoomIn: 'Zoom In', zoomOut: 'Zoom Out', resetView: 'Reset',
     deleteNote: 'Delete', copyNotes: 'Copy', cutNotes: 'Cut', pasteNotes: 'Paste',
     selectAll: 'Select All', deleteSelected: 'Delete Selected',
-    play: 'Play', stop: 'Stop', reverb: 'Reverb', delay: 'Delay',
+    play: 'Play', stop: 'Stop', pause: 'Pause', metronome: 'Metronome',
+    reverb: 'Reverb', delay: 'Delay',
     delayTime: 'Delay Time', delayFeedback: 'Feedback',
     uiScale: 'UI Scale', soundSource: 'Sound Source',
     defaultOscillator: 'Default Oscillator (Offline)', networkSoundfont: 'Network Soundfont (MusyngKite)',

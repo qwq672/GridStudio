@@ -343,16 +343,53 @@ export default function PianoRoll({ track, onNotesChange, playNote, isPlaying, c
   return (
     <div ref={containerRef} style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#1e1e1e', borderRadius: 8, overflow: 'hidden', minHeight: 0 }}>
       <div style={{ padding: 4, display: 'flex', gap: 8, flexShrink: 0 }}>
-        <button onClick={handleZoomIn}>放大</button>
-        <button onClick={handleZoomOut}>缩小</button>
-        <button onClick={handleResetView}>重置</button>
+        <button onClick={handleZoomIn}>{t.zoomIn}</button>
+        <button onClick={handleZoomOut}>{t.zoomOut}</button>
+        <button onClick={handleResetView}>{t.resetView}</button>
       </div>
-      <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-        <canvas ref={canvasRef} width="800" height="300" style={{ display: 'block' }} />
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
+        {/* 固定的音符名称标签列 */}
+        <div style={{ 
+          width: '40px', 
+          flexShrink: 0, 
+          background: '#2a2a2a', 
+          borderRight: '1px solid #3a3a3a',
+          overflow: 'hidden',
+          position: 'relative'
+        }}>
+          <canvas 
+            ref={(el) => { 
+              if (el && containerRef.current) {
+                const height = NOTE_COUNT * zoomY;
+                el.width = 40;
+                el.height = height;
+                const ctx = el.getContext('2d');
+                ctx.clearRect(0, 0, 40, height);
+                ctx.fillStyle = '#888';
+                ctx.font = '10px monospace';
+                for (let i = 0; i < NOTE_COUNT; i++) {
+                  const y = i * zoomY;
+                  ctx.fillText(noteNames[NOTE_COUNT - 1 - i], 2, y + 12);
+                }
+              }
+            }}
+            style={{ 
+              display: 'block',
+              transform: `translateY(${-offsetY}px)`
+            }} 
+          />
+        </div>
+        {/* 可滚动的钢琴卷帘 */}
+        <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }} onScroll={(e) => {
+          setOffsetY(e.target.scrollTop);
+          setOffsetX(e.target.scrollLeft);
+        }}>
+          <canvas ref={canvasRef} width="800" height="300" style={{ display: 'block' }} />
+        </div>
       </div>
       {contextMenu.visible && (
         <div style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x, background: '#2a2a2a', border: '1px solid #888', borderRadius: 4, zIndex: 1000 }}>
-          <button onClick={deleteNote} style={{ display: 'block', width: '100%', textAlign: 'left' }}>删除音符</button>
+          <button onClick={deleteNote} style={{ display: 'block', width: '100%', textAlign: 'left' }}>{t.deleteNote}</button>
         </div>
       )}
     </div>

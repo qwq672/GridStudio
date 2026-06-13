@@ -5,6 +5,7 @@ import { useAutoSave } from './hooks/useAutoSave';
 import HomePage from './components/HomePage';
 import Editor from './components/Editor';
 import { parseMidiFile, generateMidiFile } from './lib/midi';
+import { useTranslation } from './lib/i18n';
 
 export default function App() {
   const [showHome, setShowHome] = useState(true);
@@ -15,11 +16,11 @@ export default function App() {
   const [midiInfoOpen, setMidiInfoOpen] = useState(false);
   const [mode, setMode] = useState('desktop');
   const [uiScale, setUiScale] = useState(() => {
-    const saved = localStorage.getItem('gridstudio_ui_scale');
+    const saved = localStorage.getItem('arvgrid_ui_scale');
     return saved ? parseInt(saved) : 100;
   });
   const [lang, setLang] = useState(() => {
-    const saved = localStorage.getItem('gridstudio_lang');
+    const saved = localStorage.getItem('arvgrid_lang');
     return saved || 'zh';
   });
   const [sf2Loaded, setSf2Loaded] = useState(false);
@@ -27,10 +28,11 @@ export default function App() {
 
   const project = useProject();
   const audioEngine = useAudioEngine();
+  const t = useTranslation(lang);
 
   // 自动保存设置
   const [autoSaveMode, setAutoSaveMode] = useState(() => {
-    const saved = localStorage.getItem('gridstudio_autosave_mode');
+    const saved = localStorage.getItem('arvgrid_autosave_mode');
     return saved ? JSON.parse(saved) : { type: 'onChange', interval: 0 };
   });
 
@@ -49,13 +51,13 @@ export default function App() {
     const handleBeforeUnload = (e) => {
       if (hasUnsavedChanges) {
         e.preventDefault();
-        e.returnValue = '你有未保存的工程，确定要离开吗？更改将丢失。';
+        e.returnValue = lang === 'zh' ? '你有未保存的工程，确定要离开吗？更改将丢失。' : 'You have unsaved changes. Are you sure you want to leave?';
         return e.returnValue;
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [hasUnsavedChanges]);
+  }, [hasUnsavedChanges, lang]);
 
   useEffect(() => {
     const autosaveData = loadAutosave();
@@ -91,7 +93,7 @@ export default function App() {
   };
 
   const handleNewProject = () => {
-    if (hasUnsavedChanges && !confirm('新建工程将丢失未保存的更改，确定吗？')) return;
+    if (hasUnsavedChanges && !confirm(t.confirmNew)) return;
     setHasUnsavedChanges(false);
     setShowHome(false);
     project.newProject();
@@ -105,7 +107,7 @@ export default function App() {
       setHasUnsavedChanges(false);
       setShowHome(false);
     } catch (err) {
-      alert('导入 MIDI 失败: ' + err.message);
+      alert(t.importFailed + err.message);
     }
   };
 
@@ -157,29 +159,29 @@ export default function App() {
   };
 
   const handleClearCache = () => {
-    if (confirm('清空所有本地缓存工程将无法恢复，确定吗？')) {
-      localStorage.removeItem('gridstudio_autosave');
-      localStorage.removeItem('gridstudio_recent_projects');
+    if (confirm(t.confirmClear)) {
+      localStorage.removeItem('arvgrid_autosave');
+      localStorage.removeItem('arvgrid_recent_projects');
       setRecentProjects([]);
-      alert('缓存已清空');
+      alert(t.cacheCleared);
     }
   };
 
   const handleResetSettings = () => {
-    localStorage.removeItem('gridstudio_ui_scale');
-    localStorage.removeItem('gridstudio_sound_source');
-    localStorage.removeItem('gridstudio_autosave_mode');
-    localStorage.removeItem('gridstudio_lang');
+    localStorage.removeItem('arvgrid_ui_scale');
+    localStorage.removeItem('arvgrid_sound_source');
+    localStorage.removeItem('arvgrid_autosave_mode');
+    localStorage.removeItem('arvgrid_lang');
     setAutoSaveMode({ type: 'onChange', interval: 0 });
     setUiScale(100);
     setLang('zh');
     audioEngine.setSoundSource('default');
-    alert('设置已重置');
+    alert(t.settingsReset);
   };
 
   const handleLangChange = (newLang) => {
     setLang(newLang);
-    localStorage.setItem('gridstudio_lang', newLang);
+    localStorage.setItem('arvgrid_lang', newLang);
   };
 
   const handleLoadSF2 = async (arrayBuffer) => {
@@ -190,24 +192,6 @@ export default function App() {
     }
     return result.success;
   };
-
-  if (pendingAutosave) {
-    return (
-      <div style={{
-        position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
-        background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000
-      }}>
-        <div style={{ background: '#2a2a3a', padding: '24px', borderRadius: '16px', maxWidth: '400px', textAlign: 'center' }}>
-          <h3>你有旧工程尚未保存</h3>
-          <p>是否要恢复工程以保存或继续修改？</p>
-          <div style={{ display: 'flex', gap: '16px', marginTop: '20px', justifyContent: 'center' }}>
-            <button onClick={handleRecoverAutosave}>恢复工程</button>
-            <button onClick={handleDiscardAutosave}>放弃</button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   if (showHome) {
     return (
@@ -223,45 +207,66 @@ export default function App() {
         onImportProject={handleLoadProjectFile}
         recentProjects={recentProjects}
         onLoadRecent={handleLoadRecent}
+        lang={lang}
+        onLangChange={handleLangChange}
+        onLoadSF2={handleLoadSF2}
+        sf2Loaded={sf2Loaded}
+        sf2Name={sf2Name}
+        uiScale={uiScale}
+        onUiScaleChange={(val) => {
+          setUiScale(val);
+          localStorage.setItem('arvgrid_ui_scale', val);
+          document.body.style.zoom = val / 100;
+        }}
+        onClearCache={handleClearCache}
+        onResetSettings={handleResetSettings}
+        pendingAutosave={pendingAutosave}
+        onRecoverAutosave={handleRecoverAutosave}
+        onDiscardAutosave={handleDiscardAutosave}
       />
     );
   }
 
   return (
     <Editor
-      project={project}
-      audioEngine={audioEngine}
-      autoSaveMode={autoSaveMode}
-      setAutoSaveMode={setAutoSaveMode}
-      onExitToHome={() => {
-        if (hasUnsavedChanges && !confirm('返回主页将丢失未保存的更改，确定吗？')) return;
-        setShowHome(true);
-      }}
-      onOpenSettings={() => setSettingsOpen(true)}
-      onOpenMidiInfo={() => setMidiInfoOpen(true)}
-      onExportMidi={handleExportMidi}
-      onSaveProject={handleSaveProject}
-      onLoadProject={handleLoadProjectFile}
-      onNewProject={handleNewProject}
-      onToggleMode={() => setMode(mode === 'desktop' ? 'touch' : 'desktop')}
-      onFullscreen={toggleFullscreen}
-      mode={mode}
-      settingsOpen={settingsOpen}
-      setSettingsOpen={setSettingsOpen}
-      midiInfoOpen={midiInfoOpen}
-      setMidiInfoOpen={setMidiInfoOpen}
-      soundSource={audioEngine.soundSource}
-      setSoundSource={audioEngine.setSoundSource}
-      meta={project.meta}
-      setMeta={project.setMeta}
-      uiScale={uiScale}
-      onUiScaleChange={(val) => {
-        setUiScale(val);
-        localStorage.setItem('gridstudio_ui_scale', val);
-        document.body.style.zoom = val / 100;
-      }}
-      onClearCache={handleClearCache}
-      onResetSettings={handleResetSettings}
-    />
+        project={project}
+        audioEngine={audioEngine}
+        autoSaveMode={autoSaveMode}
+        setAutoSaveMode={setAutoSaveMode}
+        onExitToHome={() => {
+          if (hasUnsavedChanges && !confirm(t.confirmBack)) return;
+          setShowHome(true);
+        }}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenMidiInfo={() => setMidiInfoOpen(true)}
+        onExportMidi={handleExportMidi}
+        onSaveProject={handleSaveProject}
+        onLoadProject={handleLoadProjectFile}
+        onNewProject={handleNewProject}
+        onToggleMode={() => setMode(mode === 'desktop' ? 'touch' : 'desktop')}
+        onFullscreen={toggleFullscreen}
+        mode={mode}
+        settingsOpen={settingsOpen}
+        setSettingsOpen={setSettingsOpen}
+        midiInfoOpen={midiInfoOpen}
+        setMidiInfoOpen={setMidiInfoOpen}
+        soundSource={audioEngine.soundSource}
+        setSoundSource={audioEngine.setSoundSource}
+        meta={project.meta}
+        setMeta={project.setMeta}
+        uiScale={uiScale}
+        onUiScaleChange={(val) => {
+          setUiScale(val);
+          localStorage.setItem('arvgrid_ui_scale', val);
+          document.body.style.zoom = val / 100;
+        }}
+        onClearCache={handleClearCache}
+        onResetSettings={handleResetSettings}
+        lang={lang}
+        onLangChange={handleLangChange}
+        onLoadSF2={handleLoadSF2}
+        sf2Loaded={sf2Loaded}
+        sf2Name={sf2Name}
+      />
   );
 }
