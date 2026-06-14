@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Icons } from './Icons';
 import { useTranslation } from '../lib/i18n';
 
 export default function MenuBar({
@@ -7,60 +8,177 @@ export default function MenuBar({
   onOpenSettings, onToggleMode, onFullscreen, mode, onExitToHome,
   lang = 'zh',
   homeMode = false,
+  analyserNodeRef = null,
+  isPlaying = false,
+  editMode = 'pointer',
+  onEditModeChange = null,
+  quantizeValue = '1/4',
+  onQuantizeValueChange = null,
+  onOpenAbout = null,
 }) {
   const [activeMenu, setActiveMenu] = useState(null);
+  const menuRef = useRef(null);
   const t = useTranslation(lang);
+  const oscCanvasRef = useRef(null);
+  const oscRafRef = useRef(null);
+
+  // 点击外部关闭菜单
+  useEffect(() => {
+    if (!activeMenu) return;
+    const handler = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setActiveMenu(null);
+      }
+    };
+    // 延迟添加监听，避免当前点击事件触发
+    const timer = setTimeout(() => {
+      document.addEventListener('mousedown', handler);
+      document.addEventListener('touchstart', handler);
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('mousedown', handler);
+      document.removeEventListener('touchstart', handler);
+    };
+  }, [activeMenu]);
 
   const handleMenuClick = (menuName) => {
-    setActiveMenu(activeMenu === menuName ? null : menuName);
-  };
-
-  const handleMenuBlur = () => {
-    setTimeout(() => setActiveMenu(null), 200);
+    setActiveMenu(prev => prev === menuName ? null : menuName);
   };
 
   const disabledStyle = { opacity: 0.4, pointerEvents: 'none' };
 
   const handleItemClick = (callback, disabled) => {
     if (disabled) return;
-    callback();
     setActiveMenu(null);
+    callback();
   };
 
+  // 示波器动画
+  useEffect(() => {
+    const canvas = oscCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    let observer = null;
+
+    const resize = () => {
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        canvas.width = rect.width * 2;
+        canvas.height = rect.height * 2;
+      }
+    };
+    resize();
+    try { observer = new ResizeObserver(resize); observer.observe(canvas); } catch (e) {}
+
+    const draw = () => {
+      oscRafRef.current = requestAnimationFrame(draw);
+      const analyser = analyserNodeRef?.current;
+      if (!analyser || !ctx || !canvas) { ctx.clearRect(0, 0, canvas.width || 80, canvas.height || 36); return; }
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+      try { analyser.getByteTimeDomainData(dataArray); } catch (e) { return; }
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      let hasSignal = false;
+      for (let i = 0; i < bufferLength; i++) { if (dataArray[i] > 130 || dataArray[i] < 126) { hasSignal = true; break; } }
+      if (!hasSignal) return;
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#6a6a70';
+      ctx.beginPath();
+      const sliceWidth = canvas.width / bufferLength;
+      let x = 0;
+      for (let i = 0; i < bufferLength; i++) {
+        const v = dataArray[i] / 128.0;
+        const y = (v * canvas.height) / 2;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        x += sliceWidth;
+      }
+      ctx.stroke();
+    };
+    draw();
+    return () => { if (oscRafRef.current) cancelAnimationFrame(oscRafRef.current); if (observer) observer.disconnect(); };
+  }, [analyserNodeRef]);
+
+  const editModes = [
+    { id: 'pointer', label: lang === 'zh' ? '指针' : 'Pointer', icon: <Icons.Pointer />, title: lang === 'zh' ? '指针模式' : 'Pointer: view only' },
+    { id: 'select', label: lang === 'zh' ? '选择' : 'Select', icon: <Icons.Select />, title: lang === 'zh' ? '选择模式' : 'Select: marquee select' },
+    { id: 'draw', label: lang === 'zh' ? '添加' : 'Draw', icon: <Icons.Draw />, title: lang === 'zh' ? '添加模式' : 'Draw: add notes' },
+    { id: 'erase', label: lang === 'zh' ? '删除' : 'Erase', icon: <Icons.Erase />, title: lang === 'zh' ? '删除模式' : 'Erase: delete notes' },
+  ];
+
+  const quantizeOpts = [{ v: '1', label: '1' },{ v: '1/2', label: '1/2' },{ v: '1/4', label: '1/4' },{ v: '1/8', label: '1/8' },{ v: '1/16', label: '1/16' }];
+
   return (
-    <div className="menu-bar" onBlur={handleMenuBlur}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginRight: '12px' }}>
-        <img src="/icon.svg" alt="Arvgrid" style={{ width: '20px', height: '20px' }} />
-        <span style={{ fontWeight: 'bold', color: '#5a6eff' }}>Arvgrid</span>
+    <div className="menu-bar" ref={menuRef}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginRight: 8, flexShrink: 0 }}>
+        <img src="/icon.svg" alt="Arvgrid" style={{ width: 18, height: 18 }} />
+        <span style={{ fontWeight: 'bold', color: 'var(--text-muted)', fontSize: '0.85rem' }}>Arvgrid</span>
       </div>
+
+      {/* 文件菜单 */}
       <div className={`menu-item ${activeMenu === 'file' ? 'active' : ''}`} onClick={() => handleMenuClick('file')}>
         {t.file}
-        <div className="menu-dropdown">
-          <a onClick={() => handleItemClick(onNewProject)}>{t.newProject}</a>
-          <a onClick={() => handleItemClick(onImportMidi)}>{t.importMidi}</a>
-          <a style={homeMode ? disabledStyle : {}} onClick={() => handleItemClick(onExportMidi, homeMode)}>{t.exportMidi}</a>
-          <a style={homeMode ? disabledStyle : {}} onClick={() => handleItemClick(onSaveProject, homeMode)}>{t.saveProject}</a>
-          <a onClick={() => handleItemClick(onLoadProject)}>{t.loadProject}</a>
-          <a style={homeMode ? disabledStyle : {}} onClick={() => handleItemClick(onExitToHome, homeMode)}>{t.backToHome}</a>
-        </div>
+        {activeMenu === 'file' && <div className="menu-dropdown">
+          <a onClick={() => handleItemClick(onNewProject)}><Icons.Plus /> {t.newProject}</a>
+          <a onClick={() => handleItemClick(onImportMidi)}><Icons.Folder /> {t.importMidi}</a>
+          <a style={homeMode ? disabledStyle : {}} onClick={() => handleItemClick(onExportMidi, homeMode)}><Icons.Save /> {t.exportMidi}</a>
+          <a style={homeMode ? disabledStyle : {}} onClick={() => handleItemClick(onSaveProject, homeMode)}><Icons.Save /> {t.saveProject}</a>
+          <a onClick={() => handleItemClick(onLoadProject)}><Icons.Folder /> {t.loadProject}</a>
+          <a style={homeMode ? disabledStyle : {}} onClick={() => handleItemClick(onExitToHome, homeMode)}><Icons.Home /> {t.backToHome}</a>
+        </div>}
       </div>
+
+      {/* 编辑菜单 */}
       <div className={`menu-item ${activeMenu === 'edit' ? 'active' : ''}`} onClick={() => !homeMode && handleMenuClick('edit')} style={homeMode ? { opacity: 0.4, pointerEvents: 'none' } : {}}>
         {t.edit}
-        <div className="menu-dropdown">
-          <a onClick={() => handleItemClick(onUndo)}>{t.undo}</a>
-          <a onClick={() => handleItemClick(onRedo)}>{t.redo}</a>
+        {activeMenu === 'edit' && <div className="menu-dropdown">
+          <a onClick={() => handleItemClick(onUndo)}><Icons.Undo /> {t.undo}</a>
+          <a onClick={() => handleItemClick(onRedo)}><Icons.Redo /> {t.redo}</a>
           <a onClick={() => handleItemClick(onQuantize)}>{t.quantizeTrack}</a>
-          <a onClick={() => handleItemClick(onClearTrack)}>{t.clearTrack}</a>
+          <a onClick={() => handleItemClick(onClearTrack)}><Icons.Trash /> {t.clearTrack}</a>
           <a onClick={() => handleItemClick(onOpenMidiInfo)}>{t.midiInfo}</a>
-        </div>
+        </div>}
       </div>
+
+      {/* 设置菜单 */}
       <div className={`menu-item ${activeMenu === 'settings' ? 'active' : ''}`} onClick={() => handleMenuClick('settings')}>
         {t.settings}
-        <div className="menu-dropdown">
-          <a onClick={() => handleItemClick(onOpenSettings)}>{t.optionsPanel}</a>
+        {activeMenu === 'settings' && <div className="menu-dropdown">
+          <a onClick={() => handleItemClick(onOpenSettings)}><Icons.Settings /> {t.optionsPanel}</a>
           <a style={homeMode ? disabledStyle : {}} onClick={() => handleItemClick(onToggleMode, homeMode)}>{mode === 'desktop' ? t.touchMode : t.desktopMode}</a>
-          <a style={homeMode ? disabledStyle : {}} onClick={() => handleItemClick(onFullscreen, homeMode)}>{t.fullscreen}</a>
+          <a style={homeMode ? disabledStyle : {}} onClick={() => handleItemClick(onFullscreen, homeMode)}><Icons.Fullscreen /> {t.fullscreen}</a>
+        </div>}
+      </div>
+
+      {/* 帮助菜单 */}
+      <div className={`menu-item ${activeMenu === 'help' ? 'active' : ''}`} onClick={() => handleMenuClick('help')}>
+        {lang === 'zh' ? '帮助' : 'Help'}
+        {activeMenu === 'help' && <div className="menu-dropdown">
+          <a onClick={() => handleItemClick(onOpenAbout)}><Icons.Help /> {lang === 'zh' ? '关于' : 'About'}</a>
+        </div>}
+      </div>
+
+      {mode === 'touch' && <span className="mode-badge">{t.touchMode}</span>}
+
+      {/* 编辑模式 */}
+      {!homeMode && onEditModeChange && (
+        <div className="edit-toolbar">
+          {editModes.map(em => (
+            <button key={em.id} className={editMode === em.id ? 'active' : ''} onClick={() => onEditModeChange(em.id)} title={em.title}>
+              {em.icon} {em.label}
+            </button>
+          ))}
+          <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', margin: '0 4px', flexShrink: 0 }}>{lang === 'zh' ? '量化' : 'Quant'}</span>
+          <select value={quantizeValue} onChange={e => onQuantizeValueChange?.(e.target.value)} style={{ fontSize: '0.65rem', padding: '2px 4px', width: 52 }}>
+            {quantizeOpts.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
+          </select>
         </div>
+      )}
+
+      {/* 示波器 */}
+      <div style={{ flex: 1, minWidth: 40, maxWidth: 200, height: '100%', display: 'flex', alignItems: 'center', marginLeft: 'auto', padding: '3px 0' }}>
+        <canvas ref={oscCanvasRef} style={{ width: '100%', height: '100%', borderRadius: 3, background: 'var(--bg)' }} />
       </div>
     </div>
   );

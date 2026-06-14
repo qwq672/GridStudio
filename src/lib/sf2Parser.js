@@ -208,7 +208,8 @@ function readGens(reader, size) {
   const gens = [];
   while (reader.pos < endPos) {
     const genOper = reader.readUint16();
-    const amount = reader.readUint16();
+    // SF2规范: generator amount 是有符号16位整数
+    const amount = reader.readInt16();
     gens.push({ genOper, amount });
   }
   return gens;
@@ -255,53 +256,81 @@ function buildPresets(presetHeaders, presetBags, presetGens, instHeaders, instBa
     const bagStart = ph.bagNdx;
     const bagEnd = presetHeaders[pi + 1].bagNdx;
     
-    for (let bi = bagStart; bi < bagEnd; bi++) {
+    if (bagStart >= bagEnd) continue;
+    
+    // 检查是否有 global zone (第一个 bag 没有 GEN_INST)
+    let globalZone = null;
+    let firstBagHasInst = false;
+    const firstBag = presetBags[bagStart];
+    const nextBagForFirst = (bagStart + 1 < presetBags.length) ? presetBags[bagStart + 1] : null;
+    const firstGenEnd = nextBagForFirst ? nextBagForFirst.genNdx : presetGens.length;
+    
+    for (let gi = firstBag.genNdx; gi < firstGenEnd; gi++) {
+      const gen = presetGens[gi];
+      if (gen && gen.genOper === 41) { // GEN_INST
+        firstBagHasInst = true;
+        break;
+      }
+    }
+    
+    let actualBagStart = bagStart;
+    if (!firstBagHasInst) {
+      // 第一个 bag 是 global zone
+      globalZone = parsePresetZone(firstBag, firstGenEnd, presetGens);
+      actualBagStart = bagStart + 1;
+    }
+    
+    for (let bi = actualBagStart; bi < bagEnd; bi++) {
       const bag = presetBags[bi];
       const nextBag = (bi + 1 < presetBags.length) ? presetBags[bi + 1] : null;
-      const genEnd = nextBag ? nextBag.genNdx : (bi + 1 < presetBags.length ? presetBags[bi + 1].genNdx : presetGens.length);
+      const genEnd = nextBag ? nextBag.genNdx : presetGens.length;
       
-      // 读取preset zone的generator
-      let instIdx = -1;
-      let keyRange = null;
-      let velRange = null;
+      const zone = parsePresetZone(bag, genEnd, presetGens);
       
-      for (let gi = bag.genNdx; gi < genEnd; gi++) {
-        const gen = presetGens[gi];
-        if (!gen) continue;
-        if (gen.genOper === 41) { // GEN_INST
-          instIdx = gen.amount;
-        } else if (gen.genOper === GEN_KEYRANGE) {
-          keyRange = { low: gen.amount & 0xFF, high: (gen.amount >> 8) & 0xFF };
-        } else if (gen.genOper === GEN_VELRANGE) {
-          velRange = { low: gen.amount & 0xFF, high: (gen.amount >> 8) & 0xFF };
-        }
-      }
+      // 继承 global zone 的设置
+      const instIdx = zone.instIdx >= 0 ? zone.instIdx : (globalZone ? globalZone.instIdx : -1);
+      const keyRange = zone.keyRange || (globalZone ? globalZone.keyRange : null);
+      const velRange = zone.velRange || (globalZone ? globalZone.velRange : null);
       
       if (instIdx >= 0 && instIdx < instHeaders.length - 1) {
         const inst = instHeaders[instIdx];
         const instBagStart = inst.bagNdx;
         const instBagEnd = instHeaders[instIdx + 1].bagNdx;
         
-        for (let ibi = instBagStart; ibi < instBagEnd; ibi++) {
+        if (instBagStart >= instBagEnd) continue;
+        
+        // 检查 instrument global zone
+        let instGlobalZone = null;
+        let firstInstBagHasSample = false;
+        const firstInstBag = instBags[instBagStart];
+        const nextInstBagForFirst = (instBagStart + 1 < instBags.length) ? instBags[instBagStart + 1] : null;
+        const firstInstGenEnd = nextInstBagForFirst ? nextInstBagForFirst.genNdx : instGens.length;
+        
+        for (let gi = firstInstBag.genNdx; gi < firstInstGenEnd; gi++) {
+          const gen = instGens[gi];
+          if (gen && gen.genOper === GEN_SAMPLEID) {
+            firstInstBagHasSample = true;
+            break;
+          }
+        }
+        
+        let actualInstBagStart = instBagStart;
+        if (!firstInstBagHasSample) {
+          instGlobalZone = parseInstZone(firstInstBag, firstInstGenEnd, instGens);
+          actualInstBagStart = instBagStart + 1;
+        }
+        
+        for (let ibi = actualInstBagStart; ibi < instBagEnd; ibi++) {
           const instBag = instBags[ibi];
           const nextInstBag = (ibi + 1 < instBags.length) ? instBags[ibi + 1] : null;
           const instGenEnd = nextInstBag ? nextInstBag.genNdx : instGens.length;
           
-          let sampleId = -1;
-          let iKeyRange = keyRange;
-          let iVelRange = velRange;
+          const instZone = parseInstZone(instBag, instGenEnd, instGens);
           
-          for (let gi = instBag.genNdx; gi < instGenEnd; gi++) {
-            const gen = instGens[gi];
-            if (!gen) continue;
-            if (gen.genOper === GEN_SAMPLEID) {
-              sampleId = gen.amount;
-            } else if (gen.genOper === GEN_KEYRANGE) {
-              iKeyRange = { low: gen.amount & 0xFF, high: (gen.amount >> 8) & 0xFF };
-            } else if (gen.genOper === GEN_VELRANGE) {
-              iVelRange = { low: gen.amount & 0xFF, high: (gen.amount >> 8) & 0xFF };
-            }
-          }
+          // 继承 instrument global zone
+          const sampleId = instZone.sampleId >= 0 ? instZone.sampleId : (instGlobalZone ? instGlobalZone.sampleId : -1);
+          const iKeyRange = instZone.keyRange || (instGlobalZone ? instGlobalZone.keyRange : keyRange);
+          const iVelRange = instZone.velRange || (instGlobalZone ? instGlobalZone.velRange : velRange);
           
           if (sampleId >= 0 && sampleId < sampleHeaders.length) {
             const sh = sampleHeaders[sampleId];
@@ -322,6 +351,46 @@ function buildPresets(presetHeaders, presetBags, presetGens, instHeaders, instBa
   return presets;
 }
 
+function parsePresetZone(bag, genEnd, presetGens) {
+  let instIdx = -1;
+  let keyRange = null;
+  let velRange = null;
+  
+  for (let gi = bag.genNdx; gi < genEnd; gi++) {
+    const gen = presetGens[gi];
+    if (!gen) continue;
+    if (gen.genOper === 41) { // GEN_INST
+      instIdx = gen.amount;
+    } else if (gen.genOper === GEN_KEYRANGE) {
+      keyRange = { low: gen.amount & 0xFF, high: (gen.amount >> 8) & 0xFF };
+    } else if (gen.genOper === GEN_VELRANGE) {
+      velRange = { low: gen.amount & 0xFF, high: (gen.amount >> 8) & 0xFF };
+    }
+  }
+  
+  return { instIdx, keyRange, velRange };
+}
+
+function parseInstZone(bag, genEnd, instGens) {
+  let sampleId = -1;
+  let keyRange = null;
+  let velRange = null;
+  
+  for (let gi = bag.genNdx; gi < genEnd; gi++) {
+    const gen = instGens[gi];
+    if (!gen) continue;
+    if (gen.genOper === GEN_SAMPLEID) {
+      sampleId = gen.amount;
+    } else if (gen.genOper === GEN_KEYRANGE) {
+      keyRange = { low: gen.amount & 0xFF, high: (gen.amount >> 8) & 0xFF };
+    } else if (gen.genOper === GEN_VELRANGE) {
+      velRange = { low: gen.amount & 0xFF, high: (gen.amount >> 8) & 0xFF };
+    }
+  }
+  
+  return { sampleId, keyRange, velRange };
+}
+
 function extractSample(sh, sampleDataRaw, keyRange) {
   if (!sampleDataRaw) return null;
   
@@ -331,12 +400,13 @@ function extractSample(sh, sampleDataRaw, keyRange) {
   
   if (length <= 0 || length > 10000000) return null;
   
-  // 提取16位PCM样本数据并转换为WAV格式的ArrayBuffer
   const sampleRate = sh.sampleRate;
-  const numSamples = length;
   
-  // 创建WAV文件
-  const wavBuffer = createWavBuffer(sampleDataRaw, start, end, sampleRate);
+  // 直接提取 PCM 数据，避免创建 WAV 中间格式
+  const pcmData = new Float32Array(length);
+  for (let i = 0; i < length; i++) {
+    pcmData[i] = sampleDataRaw[start + i] / 32768;
+  }
   
   return {
     name: sh.name,
@@ -344,49 +414,9 @@ function extractSample(sh, sampleDataRaw, keyRange) {
     pitchCorrection: sh.pitchCorrection,
     sampleRate,
     keyRange,
-    audioData: wavBuffer,
-    buffer: null, // 稍后由AudioContext解码
+    pcmData, // 直接返回 Float32 PCM 数据
+    buffer: null, // 稍后由 AudioContext 创建
   };
-}
-
-function createWavBuffer(pcmData, start, end, sampleRate) {
-  const numSamples = end - start;
-  const bytesPerSample = 2;
-  const dataSize = numSamples * bytesPerSample;
-  const buffer = new ArrayBuffer(44 + dataSize);
-  const view = new DataView(buffer);
-  
-  // RIFF头
-  writeString(view, 0, 'RIFF');
-  view.setUint32(4, 36 + dataSize, true);
-  writeString(view, 8, 'WAVE');
-  
-  // fmt子块
-  writeString(view, 12, 'fmt ');
-  view.setUint32(16, 16, true); // chunk size
-  view.setUint16(20, 1, true); // PCM format
-  view.setUint16(22, 1, true); // mono
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * bytesPerSample, true); // byte rate
-  view.setUint16(32, bytesPerSample, true); // block align
-  view.setUint16(34, 16, true); // bits per sample
-  
-  // data子块
-  writeString(view, 36, 'data');
-  view.setUint32(40, dataSize, true);
-  
-  // 写入样本数据
-  for (let i = 0; i < numSamples; i++) {
-    view.setInt16(44 + i * 2, pcmData[start + i], true);
-  }
-  
-  return buffer;
-}
-
-function writeString(view, offset, str) {
-  for (let i = 0; i < str.length; i++) {
-    view.setUint8(offset + i, str.charCodeAt(i));
-  }
 }
 
 // RIFF读取辅助类

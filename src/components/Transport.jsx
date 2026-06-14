@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Icons } from './Icons';
 import { useTranslation } from '../lib/i18n';
 
@@ -6,7 +6,10 @@ export default function Transport({
   bpm,
   onBpmChange,
   isPlaying,
+  isPaused,
   onPlay,
+  onPause,
+  onResume,
   onStop,
   currentTime,
   totalDuration,
@@ -19,11 +22,57 @@ export default function Transport({
   onDelayTimeChange,
   delayFeedback,
   onDelayFeedbackChange,
+  metronomeOn,
+  onMetronomeOnChange,
+  getPlaybackTime,
   lang = 'zh',
 }) {
   const [isDragging, setIsDragging] = useState(false);
   const progressBarRef = useRef(null);
+  const progressFillRef = useRef(null);
+  const timeDisplayRef = useRef(null);
+  const displayTimeRef = useRef(0);
+  const rafRef = useRef(null);
   const t = useTranslation(lang);
+
+  // 使用 requestAnimationFrame 更新显示时间
+  useEffect(() => {
+    if (!isPlaying || isPaused) {
+      displayTimeRef.current = currentTime || 0;
+      // 更新 DOM
+      if (progressFillRef.current) {
+        const percent = totalDuration ? (displayTimeRef.current / totalDuration) * 100 : 0;
+        progressFillRef.current.style.width = `${percent}%`;
+      }
+      if (timeDisplayRef.current) {
+        timeDisplayRef.current.textContent = `${formatTime(displayTimeRef.current)} / ${formatTime(totalDuration)}`;
+      }
+      return;
+    }
+
+    const updateDisplay = () => {
+      if (getPlaybackTime) {
+        displayTimeRef.current = getPlaybackTime();
+      }
+      // 直接更新 DOM，避免 React 重渲染
+      if (progressFillRef.current) {
+        const percent = totalDuration ? (displayTimeRef.current / totalDuration) * 100 : 0;
+        progressFillRef.current.style.width = `${percent}%`;
+      }
+      if (timeDisplayRef.current) {
+        timeDisplayRef.current.textContent = `${formatTime(displayTimeRef.current)} / ${formatTime(totalDuration)}`;
+      }
+      rafRef.current = requestAnimationFrame(updateDisplay);
+    };
+
+    rafRef.current = requestAnimationFrame(updateDisplay);
+
+    return () => {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+      }
+    };
+  }, [isPlaying, isPaused, getPlaybackTime, currentTime, totalDuration]);
 
   const formatTime = (sec) => {
     const mins = Math.floor(sec / 60);
@@ -33,11 +82,6 @@ export default function Transport({
 
   const handleSeekMouseDown = (e) => {
     setIsDragging(true);
-    handleSeek(e);
-  };
-
-  const handleSeek = (e) => {
-    if (!progressBarRef.current) return;
     const rect = progressBarRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const percent = Math.max(0, Math.min(1, x / rect.width));
@@ -45,42 +89,50 @@ export default function Transport({
     onSeek(newTime);
   };
 
-  const handleMouseMove = (e) => {
-    if (isDragging) {
-      handleSeek(e);
-    }
-  };
-
-  const handleMouseUp = () => {
-    setIsDragging(false);
-  };
-
-  React.useEffect(() => {
-    if (isDragging) {
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
-      return () => {
-        window.removeEventListener('mousemove', handleMouseMove);
-        window.removeEventListener('mouseup', handleMouseUp);
-      };
-    }
-  }, [isDragging]);
+  useEffect(() => {
+    if (!isDragging) return;
+    const handleMove = (e) => {
+      if (!progressBarRef.current) return;
+      const rect = progressBarRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const percent = Math.max(0, Math.min(1, x / rect.width));
+      const newTime = percent * totalDuration;
+      onSeek(newTime);
+    };
+    const handleUp = () => setIsDragging(false);
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+    };
+  }, [isDragging, totalDuration, onSeek]);
 
   return (
-    <div className="controls-bar" style={{ padding: '6px', display: 'flex', gap: '12px', alignItems: 'center', borderTop: '1px solid #3a3a4e', flexShrink: 0 }}>
-      <button onClick={onPlay} disabled={isPlaying}>{Icons.Play ? <Icons.Play /> : '▶'}</button>
+    <div className="controls-bar" style={{ padding: '6px 10px', display: 'flex', gap: 8, alignItems: 'center', borderTop: '1px solid var(--border)', flexShrink: 0, background: 'var(--panel)', flexWrap: 'wrap' }}>
+      {!isPlaying ? (
+        <button onClick={onPlay}>{Icons.Play ? <Icons.Play /> : '▶'}</button>
+      ) : isPaused ? (
+        <button onClick={onResume}>{Icons.Play ? <Icons.Play /> : '▶'}</button>
+      ) : (
+        <button onClick={onPause}>{Icons.Pause ? <Icons.Pause /> : '⏸'}</button>
+      )}
       <button onClick={onStop} disabled={!isPlaying}>{Icons.Stop ? <Icons.Stop /> : '⏹'}</button>
+      <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+        <input type="checkbox" checked={metronomeOn} onChange={(e) => onMetronomeOnChange(e.target.checked)} />
+        {t.metronome || '节拍器'}
+      </label>
       <span>BPM</span>
       <input type="number" value={bpm} onChange={(e) => onBpmChange(parseInt(e.target.value))} style={{ width: '70px' }} />
       <div 
         ref={progressBarRef}
         className="progress-bar" 
-        style={{ width: '200px', height: '8px', background: '#3a3a4e', borderRadius: '4px', cursor: 'pointer', position: 'relative' }}
+        style={{ width: 160, height: 6, background: 'var(--border)', borderRadius: 3, cursor: 'pointer', position: 'relative' }}
         onMouseDown={handleSeekMouseDown}
       >
-        <div className="progress-fill" style={{ width: `${totalDuration ? (currentTime / totalDuration) * 100 : 0}%`, height: '100%', background: '#5a6eff', borderRadius: '4px', pointerEvents: 'none' }} />
+        <div ref={progressFillRef} className="progress-fill" style={{ width: `${totalDuration ? (currentTime / totalDuration) * 100 : 0}%`, height: '100%', background: 'var(--accent-hover)', borderRadius: 3, pointerEvents: 'none' }} />
       </div>
-      <span>{formatTime(currentTime)} / {formatTime(totalDuration)}</span>
+      <span ref={timeDisplayRef}>{formatTime(currentTime)} / {formatTime(totalDuration)}</span>
       <div style={{ marginLeft: 'auto', display: 'flex', gap: '12px', alignItems: 'center' }}>
         <span>{t.reverb}</span>
         <input type="range" min="0" max="1" step="0.01" value={reverbSend} onChange={(e) => onReverbSendChange(parseFloat(e.target.value))} style={{ width: '60px' }} />

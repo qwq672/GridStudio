@@ -1,8 +1,9 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import { Icons } from './Icons';
 import { useTranslation } from '../lib/i18n';
 
-// 完整的 GM 音色列表（0-127，中英文）
+const TRACK_COLORS = ['#ff6b6b','#ff922b','#fcc419','#51cf66','#20c997','#339af0','#845ef7','#e64980','#adb5bd','#ff8787','#d8f5a2','#748ffc'];
+
 const GM_INSTRUMENTS = [
   { id: 0, zh: "大钢琴", en: "Acoustic Grand Piano" },
   { id: 1, zh: "亮音钢琴", en: "Bright Acoustic Piano" },
@@ -135,151 +136,165 @@ const GM_INSTRUMENTS = [
 ];
 
 export default function TrackPanel({
-  tracks,
-  currentTrackId,
-  onSelectTrack,
-  onAddTrack,
-  onDeleteTrack,
-  onVolumeChange,
-  onPanChange,
-  onMuteToggle,
-  onProgramChange,
-  playNote,
-  lang = 'zh',
+  tracks, currentTrackId, onSelectTrack, onAddTrack, onDeleteTrack,
+  onVolumeChange, onPanChange, onMuteToggle, onProgramChange,
+  onColorChange, onCommentChange,
+  playNote, lang = 'zh',
 }) {
-  const [showInstrumentPanel, setShowInstrumentPanel] = useState({});
-  const [searchQuery, setSearchQuery] = useState({});
-  const [previewingId, setPreviewingId] = useState(null);
+  const [instPanel, setInstPanel] = useState(null);
+  const [instSearch, setInstSearch] = useState('');
+  const [previewId, setPreviewId] = useState(null);
+  const [ctxMenu, setCtxMenu] = useState(null);
+  const [commentEdit, setCommentEdit] = useState(null);
   const t = useTranslation(lang);
 
-  const toggleInstrumentPanel = (id) => {
-    setShowInstrumentPanel(prev => ({ ...prev, [id]: !prev[id] }));
-  };
+  const filtered = instPanel ? GM_INSTRUMENTS.filter(i => {
+    if (!instSearch) return true;
+    const q = instSearch.toLowerCase();
+    return i.id.toString() === q || i.zh.includes(q) || i.en.toLowerCase().includes(q);
+  }) : [];
 
-  const handlePreview = (e, programId) => {
+  const handlePreview = (e, prog) => {
     e.stopPropagation();
-    if (previewingId === programId) {
-      setPreviewingId(null);
-    } else {
-      setPreviewingId(programId);
-      // 播放 C4 音符试听
-      playNote('C4', 0.5, 90, programId);
-      setTimeout(() => setPreviewingId(null), 500);
-    }
+    if (previewId === prog) { setPreviewId(null); return; }
+    setPreviewId(prog);
+    playNote('C4', 0.5, 90, prog);
+    setTimeout(() => setPreviewId(null), 500);
   };
 
-  const filteredInstruments = (trackId) => {
-    const query = searchQuery[trackId] || '';
-    if (!query) return GM_INSTRUMENTS;
-    
-    const lowerQuery = query.toLowerCase();
-    return GM_INSTRUMENTS.filter(inst => 
-      inst.id.toString().includes(query) ||
-      inst.zh.includes(query) ||
-      inst.en.toLowerCase().includes(lowerQuery)
-    );
-  };
+  const closeInstPanel = () => { setInstPanel(null); setInstSearch(''); };
 
   return (
-    <div className="track-panel" style={{ background: '#2a2a2a', borderRadius: 8, width: 280, display: 'flex', flexDirection: 'column', overflow: 'hidden', border: '1px solid #3a3a3a' }}>
-      <div style={{ padding: 8, fontWeight: 'bold', borderBottom: '1px solid #3a3a3a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span>{t.tracks}</span>
-        <button onClick={onAddTrack}><Icons.Plus /></button>
+    <div style={{ width: 260, flexShrink: 0, flexDirection: 'column', background: 'var(--panel)', borderRadius: 8, border: '1px solid var(--border)', overflow: 'hidden', display: 'flex' }}>
+      {/* 头部 */}
+      <div style={{ padding: '8px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border)' }}>
+        <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>{t.tracks}</span>
+        <button onClick={onAddTrack} style={{ padding: '2px 6px' }}><Icons.Plus /></button>
       </div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {tracks.map(track => (
-          <div
-            key={track.id}
-            onClick={() => onSelectTrack(track.id)}
-            style={{
-              background: track.id === currentTrackId ? '#888' : '#2a2a2a',
-              padding: 6,
-              cursor: 'pointer',
-              borderRadius: 6,
-              border: `1px solid ${track.id === currentTrackId ? '#888' : '#3a3a3a'}`,
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>{track.name} (P{track.program})</span>
-              {tracks.length > 1 && (
-                <button onClick={(e) => { e.stopPropagation(); onDeleteTrack(track.id); }} style={{ padding: '2px 6px' }}>
-                  <Icons.Trash />
-                </button>
-              )}
-            </div>
-            <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-              <Icons.Volume />
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={track.volume}
-                onChange={e => { e.stopPropagation(); onVolumeChange(track.id, parseInt(e.target.value)); }}
-                style={{ width: '60px' }}
-              />
-              <Icons.Pan />
-              <input
-                type="range"
-                min="0"
-                max="127"
-                value={track.pan}
-                onChange={e => { e.stopPropagation(); onPanChange(track.id, parseInt(e.target.value)); }}
-                style={{ width: '60px' }}
-              />
-              <button onClick={(e) => { e.stopPropagation(); onMuteToggle(track.id); }}>
-                {track.mute ? <Icons.Mute /> : <Icons.Unmute />}
-              </button>
-              <button onClick={(e) => { e.stopPropagation(); toggleInstrumentPanel(track.id); }}>
-                <Icons.Settings />
-              </button>
-            </div>
-            {showInstrumentPanel[track.id] && (
-              <div style={{ marginTop: 8, borderTop: '1px solid #3a3a3a', paddingTop: 8 }} onClick={(e) => e.stopPropagation()}>
-                <div style={{ marginBottom: 8 }}>
-                  <input
-                    type="text"
-                    placeholder={t.searchInstrument}
-                    value={searchQuery[track.id] || ''}
-                    onChange={(e) => setSearchQuery(prev => ({ ...prev, [track.id]: e.target.value }))}
-                    style={{ width: '100%', padding: '4px 8px', fontSize: '0.75rem' }}
-                  />
+
+      {/* 轨道列表 */}
+      <div style={{ flex: 1, overflow: 'auto', padding: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {tracks.map(track => {
+          const isSel = track.id === currentTrackId;
+          const color = track.color || '#888';
+          return (
+            <div key={track.id} onContextMenu={(e) => {
+              e.preventDefault();
+              onSelectTrack(track.id);
+              setCtxMenu({ id: track.id, x: e.clientX, y: e.clientY });
+            }}>
+              <div onClick={() => onSelectTrack(track.id)} style={{
+                background: isSel ? 'var(--track-hover)' : 'var(--track-bg)',
+                padding: 6, borderRadius: 6, border: isSel ? '1px solid var(--text-muted)' : '1px solid var(--border)',
+                borderLeft: `3px solid ${color}`, cursor: 'pointer',
+              }}>
+                {/* 名称行 */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 500 }}>{track.name || `Track ${track.id}`}</span>
+                  <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>P{track.program}</span>
                 </div>
-                <div style={{ maxHeight: 250, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  {filteredInstruments(track.id).map(inst => (
-                    <div
-                      key={inst.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        padding: '6px 8px',
-                        background: track.program === inst.id ? '#888' : '#3a3a3a',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                        fontSize: '0.75rem',
-                      }}
-                    >
-                      <span style={{ flex: 1, cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); onProgramChange(track.id, inst.id); }}>
-                        <strong>{inst.id}</strong>: {inst.zh} / {inst.en}
-                      </span>
-                      <button 
-                        onClick={(e) => handlePreview(e, inst.id)}
-                        style={{ 
-                          padding: '2px 8px',
-                          background: previewingId === inst.id ? '#5a6eff' : '#4a4a4a',
-                          fontSize: '0.7rem'
-                        }}
-                      >
-                        {t.preview}
-                      </button>
-                    </div>
-                  ))}
+                {/* 控制行 */}
+                <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <Icons.Volume />
+                  <input type="range" min="0" max="100" value={track.volume || 80} onChange={e => { e.stopPropagation(); onVolumeChange(track.id, parseInt(e.target.value)); }} style={{ width: 40 }} />
+                  <button onClick={e => { e.stopPropagation(); onMuteToggle(track.id); }} style={{ padding: '2px 4px', background: 'none' }}>
+                    {track.mute ? <Icons.Mute /> : <Icons.Unmute />}
+                  </button>
+                  <button onClick={e => { e.stopPropagation(); setInstPanel(track.id); setInstSearch(''); }} style={{ padding: '2px 4px', background: 'none' }} title={t.instrument}>
+                    <Icons.Note />
+                  </button>
+                  {track.comment && <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', marginLeft: 'auto', maxWidth: 60, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.comment}</span>}
                 </div>
               </div>
-            )}
-          </div>
-        ))}
+            </div>
+          );
+        })}
       </div>
+
+      {/* 音轨右键菜单 */}
+      {ctxMenu && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 999 }} onClick={() => setCtxMenu(null)} onContextMenu={e => { e.preventDefault(); setCtxMenu(null); }}>
+          <div style={{
+            position: 'fixed', top: Math.min(ctxMenu.y, window.innerHeight - 200), left: Math.min(ctxMenu.x, window.innerWidth - 180),
+            background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 6, padding: 4, zIndex: 1000,
+            minWidth: 150, boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
+          }} onClick={e => e.stopPropagation()}>
+            <button onClick={() => { setInstPanel(ctxMenu.id); setInstSearch(''); setCtxMenu(null); }} style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none', borderRadius: 3, padding: '5px 8px', fontSize: '0.72rem', color: 'var(--text)' }}>
+              <Icons.Note /> {lang === 'zh' ? '替换乐器' : 'Change Instrument'}
+            </button>
+            <button onClick={() => { setCommentEdit(ctxMenu.id); setCtxMenu(null); }} style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none', borderRadius: 3, padding: '5px 8px', fontSize: '0.72rem', color: 'var(--text)' }}>
+              {lang === 'zh' ? '更改注释' : 'Edit Comment'}
+            </button>
+            <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', padding: '4px 8px' }}>{lang === 'zh' ? '颜色' : 'Color'}</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, padding: '0 8px 4px' }}>
+              {TRACK_COLORS.map(c => (
+                <div key={c} onClick={() => { onColorChange(ctxMenu.id, c); setCtxMenu(null); }} style={{
+                  width: 18, height: 18, borderRadius: 4, background: c, cursor: 'pointer',
+                  border: tracks.find(t => t.id === ctxMenu.id)?.color === c ? '2px solid #fff' : '1px solid var(--border)',
+                }} />
+              ))}
+            </div>
+            <div style={{ height: 1, background: 'var(--border)', margin: '2px 0' }} />
+            <button onClick={() => { if (tracks.length > 1) { onDeleteTrack(ctxMenu.id); } setCtxMenu(null); }} style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none', borderRadius: 3, padding: '5px 8px', fontSize: '0.72rem', color: 'var(--danger)' }}>
+              <Icons.Trash /> {lang === 'zh' ? '删除轨道' : 'Delete Track'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 注释编辑 */}
+      {commentEdit && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1001, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }} onClick={() => setCommentEdit(null)}>
+          <div style={{ background: 'var(--panel)', padding: 16, borderRadius: 8, border: '1px solid var(--border)', minWidth: 260 }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: '0.85rem', marginBottom: 8 }}>{lang === 'zh' ? '编辑注释' : 'Edit Comment'}</div>
+            <input type="text" defaultValue={tracks.find(t => t.id === commentEdit)?.comment || ''} autoFocus
+              style={{ width: '100%', marginBottom: 10 }}
+              onKeyDown={e => { if (e.key === 'Enter') { onCommentChange(commentEdit, e.target.value); setCommentEdit(null); } if (e.key === 'Escape') setCommentEdit(null); }} />
+            <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+              <button onClick={() => setCommentEdit(null)}>{lang === 'zh' ? '取消' : 'Cancel'}</button>
+              <button className="primary" onClick={() => { const input = document.querySelector('input[autofocus]'); onCommentChange(commentEdit, input?.value || ''); setCommentEdit(null); }}>
+                {lang === 'zh' ? '确定' : 'OK'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 乐器选择侧栏 */}
+      {instPanel !== null && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 500, display: 'flex' }}>
+          <div style={{ flex: 1, background: 'rgba(0,0,0,0.5)' }} onClick={closeInstPanel} />
+          <div style={{ width: 280, maxWidth: '90vw', height: '100%', background: 'var(--panel)', borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column', boxShadow: '-4px 0 20px rgba(0,0,0,0.5)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
+              <span style={{ flex: 1, fontSize: '0.9rem' }}>{t.instrument}</span>
+              <button onClick={closeInstPanel} style={{ background: 'none', padding: 4 }}><Icons.Close /></button>
+            </div>
+            <div style={{ padding: 8, borderBottom: '1px solid var(--border)' }}>
+              <input type="text" value={instSearch} onChange={e => setInstSearch(e.target.value)} placeholder={t.searchInstrument}
+                style={{ width: '100%', fontSize: '0.75rem' }} />
+            </div>
+            <div style={{ flex: 1, overflow: 'auto', padding: 6 }}>
+              {filtered.map(inst => {
+                const track = tracks.find(t => t.id === instPanel);
+                const isCur = track?.program === inst.id;
+                return (
+                  <div key={inst.id} style={{
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    padding: '5px 8px', background: isCur ? 'var(--track-hover)' : 'transparent',
+                    borderRadius: 4, cursor: 'pointer', fontSize: '0.72rem',
+                    border: isCur ? '1px solid var(--text-muted)' : '1px solid transparent',
+                  }} onClick={() => { onProgramChange(instPanel, inst.id); closeInstPanel(); }}>
+                    <span style={{ flex: 1 }}><strong>{inst.id}</strong>: {inst.zh} / {inst.en}</span>
+                    <button onClick={e => handlePreview(e, inst.id)} style={{ padding: '2px 6px', fontSize: '0.65rem', background: previewId === inst.id ? 'var(--accent-hover)' : undefined }}>
+                      {t.preview}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

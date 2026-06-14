@@ -16,11 +16,9 @@ export default function HomePage({
   return (
     <div style={{
       height: '100vh',
-      background: 'linear-gradient(135deg, #1a1a2a 0%, #2a2a3a 100%)',
+      background: 'var(--bg)',
       display: 'flex',
       flexDirection: 'column',
-      padding: '0',
-      position: 'relative',
       overflow: 'auto'
     }}>
       <MenuBar
@@ -41,74 +39,64 @@ export default function HomePage({
         overflow: 'auto'
       }}>
         <div style={{
-          maxWidth: '800px',
+          maxWidth: 700,
           width: '100%',
-          background: 'rgba(0,0,0,0.5)',
-          backdropFilter: 'blur(10px)',
-          borderRadius: '24px',
-          padding: '32px',
-          textAlign: 'center'
+          background: 'var(--panel)',
+          borderRadius: 16,
+          padding: 32,
+          textAlign: 'center',
+          border: '1px solid var(--border)',
         }}>
           <img 
             src="/icon.svg" 
-            alt="Arvgrid Logo" 
-            style={{ 
-              width: '120px', 
-              height: 'auto', 
-              marginBottom: '16px',
-              filter: 'drop-shadow(0 4px 8px rgba(90, 110, 255, 0.3))'
-            }} 
+            alt="Arvgrid" 
+            style={{ width: 100, height: 'auto', marginBottom: 12, opacity: 0.8 }} 
           />
-          <h1 style={{ fontSize: '3rem', marginBottom: '8px', color: '#5a6eff' }}>Arvgrid</h1>
-          <p style={{ marginBottom: '32px', color: '#aaa' }}>{t.tagline}</p>
+          <h1 style={{ fontSize: '2.5rem', marginBottom: 6, color: 'var(--text)', fontWeight: 300 }}>Arvgrid</h1>
+          <p style={{ marginBottom: 28, color: 'var(--text-muted)', fontSize: '0.9rem' }}>{t.tagline}</p>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '32px' }}>
-            <button onClick={onNewProject} style={{ padding: '16px', fontSize: '1rem', background: '#5a6eff' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 28 }}>
+            <button onClick={onNewProject} style={{ padding: '14px', fontSize: '0.95rem', background: 'var(--accent-hover)', justifyContent: 'center' }}>
               <Icons.Play /> {t.newProject}
             </button>
-            <button onClick={onImportMidi} style={{ padding: '16px', fontSize: '1rem' }}>
+            <button onClick={onImportMidi} style={{ padding: '14px', fontSize: '0.95rem', justifyContent: 'center' }}>
               <Icons.Settings /> {t.importMidi}
             </button>
-            <button onClick={onImportProject} style={{ padding: '16px', fontSize: '1rem' }}>
+            <button onClick={onImportProject} style={{ padding: '14px', fontSize: '0.95rem', justifyContent: 'center' }}>
               <Icons.Fullscreen /> {t.importProject}
             </button>
           </div>
 
           {recentProjects.length > 0 && (
             <div>
-              <h3 style={{ textAlign: 'left', marginBottom: '12px' }}>{t.recentProjects}</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <h3 style={{ textAlign: 'left', marginBottom: 10, fontSize: '0.9rem', color: 'var(--text-muted)' }}>{t.recentProjects}</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {recentProjects.map(proj => (
-                  <div key={proj.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#2a2a3a', padding: '12px', borderRadius: '8px' }}>
+                  <div key={proj.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--track-bg)', padding: 10, borderRadius: 6, border: '1px solid var(--border)' }}>
                     <div>
-                      <div style={{ fontWeight: 'bold' }}>{proj.title}</div>
-                      <div style={{ fontSize: '0.7rem', color: '#aaa' }}>{new Date(proj.timestamp).toLocaleString()}</div>
+                      <div style={{ fontWeight: 600 }}>{proj.title}</div>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{new Date(proj.timestamp).toLocaleString()}</div>
                     </div>
                     <button onClick={() => onLoadRecent(proj)} style={{ padding: '4px 12px' }}>{t.load}</button>
                   </div>
                 ))}
               </div>
-              <button onClick={onClearRecent} style={{ marginTop: '12px', background: '#aa4455' }}>{t.clearRecent}</button>
+              <button onClick={onClearRecent} style={{ marginTop: 10 }} className="danger">{t.clearRecent}</button>
             </div>
           )}
         </div>
 
         {pendingAutosave && (
           <div style={{
-            maxWidth: '800px',
-            width: '100%',
-            background: 'rgba(90, 110, 255, 0.1)',
-            border: '1px solid #5a6eff',
-            borderRadius: '16px',
-            padding: '24px',
-            marginTop: '20px',
-            textAlign: 'left'
+            maxWidth: 700, width: '100%',
+            background: 'var(--panel)', border: '1px solid var(--border)',
+            borderRadius: 12, padding: 20, marginTop: 16, textAlign: 'left'
           }}>
-            <h3 style={{ color: '#5a6eff', marginBottom: '8px' }}>{t.recoverTitle}</h3>
-            <p style={{ color: '#aaa', marginBottom: '16px' }}>{t.recoverDesc}</p>
-            <div style={{ display: 'flex', gap: '16px' }}>
-              <button onClick={onRecoverAutosave} style={{ background: '#5a6eff' }}>{t.recover}</button>
-              <button onClick={onDiscardAutosave} style={{ background: '#aa4455' }}>{t.discard}</button>
+            <h3 style={{ color: 'var(--text)', marginBottom: 6, fontSize: '0.95rem' }}>{t.recoverTitle}</h3>
+            <p style={{ color: 'var(--text-muted)', marginBottom: 14, fontSize: '0.8rem' }}>{t.recoverDesc}</p>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <button onClick={onRecoverAutosave} className="primary">{t.recover}</button>
+              <button onClick={onDiscardAutosave} className="danger">{t.discard}</button>
             </div>
           </div>
         )}

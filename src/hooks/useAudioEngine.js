@@ -3,6 +3,16 @@ import Soundfont from 'soundfont-player';
 import { getOscillatorPreset } from '../lib/oscillatorPresets';
 import { parseSF2 } from '../lib/sf2Parser';
 
+// 前瞻调度器默认参数
+const MAX_POLYPHONY = 48; // 提高复音数上限
+
+// 缓冲区预设: [lookahead秒, schedulerIntervalMs]
+const BUFFER_PRESETS = {
+  short: [0.08, 12],  // 更短的 lookahead，更频繁的调度
+  medium: [0.15, 25],
+  long: [0.3, 60],
+};
+
 export function useAudioEngine() {
   const audioCtxRef = useRef(null);
   const masterGainRef = useRef(null);
@@ -16,32 +26,59 @@ export function useAudioEngine() {
   const sf2DataRef = useRef(null);
   const sf2BuffersRef = useRef({});
   const [soundSource, setSoundSource] = useState('default');
-  const [reverbSend, setReverbSend] = useState(0.3);
-  const [delaySend, setDelaySend] = useState(0.2);
+  const [reverbSend, setReverbSend] = useState(0.15);
+  const [delaySend, setDelaySend] = useState(0.1);
   const [delayTime, setDelayTime] = useState(0.3);
-  const [delayFeedback, setDelayFeedback] = useState(0.3);
+  const [delayFeedback, setDelayFeedback] = useState(0.2);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [totalDuration, setTotalDuration] = useState(0);
   const playIntervalRef = useRef(null);
+  const schedulerTimerRef = useRef(null);
   const startTimeRef = useRef(0);
-  const scheduledEventsRef = useRef([]);
+  const pauseTimeRef = useRef(0);
   const isPlayingRef = useRef(false);
+  const isPausedRef = useRef(false);
   const noiseBufferRef = useRef(null);
-  // 复用的效果发送节点
   const reverbSendGainRef = useRef(null);
   const delaySendGainRef = useRef(null);
   const dryGainNodeRef = useRef(null);
+  const analyserNodeRef = useRef(null);
+  const soundSourceRef = useRef('default');
+  const [metronomeOn, setMetronomeOn] = useState(false);
+  const metronomeOnRef = useRef(false);
+  const bpmRef = useRef(120);
+  const [bufferSize, setBufferSizeState] = useState('medium');
+  const bufferSizeRef = useRef('medium');
+  const lookaheadRef = useRef(0.15);
+  const schedulerMsRef = useRef(25);
+  const scheduledTimeoutsRef = useRef([]);
+  const eventsRef = useRef([]);
+  const nextEventIndexRef = useRef(0);
+  const nextMetronomeIndexRef = useRef(0);
+  const activeNodeGroupsRef = useRef([]);
+  const totalDurationRef = useRef(0);
 
-  const initAudio = async () => {
+  useEffect(() => { soundSourceRef.current = soundSource; }, [soundSource]);
+  useEffect(() => { metronomeOnRef.current = metronomeOn; }, [metronomeOn]);
+
+  const initAudio = useCallback(async () => {
     if (audioCtxRef.current) return audioCtxRef.current;
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     audioCtxRef.current = ctx;
 
     const master = ctx.createGain();
-    master.gain.value = 0.8;
-    master.connect(ctx.destination);
+    master.gain.value = 0.7;
     masterGainRef.current = master;
+
+    // 示波器分析器节点 - 插入在 master 和 destination 之间
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.8;
+    master.connect(analyser);
+    analyser.connect(ctx.destination);
+    analyserNodeRef.current = analyser;
 
     const dry = ctx.createGain();
     dry.gain.value = 0.7;
@@ -49,31 +86,29 @@ export function useAudioEngine() {
     dryGainRef.current = dry;
 
     const convolver = ctx.createConvolver();
-    convolver.buffer = generateReverbIR(ctx, 2.5, 2.0);
+    convolver.buffer = generateReverbIR(ctx, 1.2, 2.0);
     convolverRef.current = convolver;
 
     const reverbGain = ctx.createGain();
-    reverbGain.gain.value = reverbSend;
+    reverbGain.gain.value = 0.3;
     convolver.connect(reverbGain);
     reverbGain.connect(master);
     wetReverbGainRef.current = reverbGain;
 
-    const delayNode = ctx.createDelay(5.0);
-    delayNode.delayTime.value = delayTime;
+    const delayNode = ctx.createDelay(2.0);
+    delayNode.delayTime.value = 0.3;
     delayNodeRef.current = delayNode;
 
-    const feedbackGain = ctx.createGain();
-    feedbackGain.gain.value = delayFeedback;
-    delayFeedbackRef.current = feedbackGain;
-
     const delayGain = ctx.createGain();
-    delayGain.gain.value = delaySend;
+    delayGain.gain.value = 0.2;
     wetDelayGainRef.current = delayGain;
 
-    delayNode.connect(feedbackGain);
-    feedbackGain.connect(delayNode);
     delayNode.connect(delayGain);
     delayGain.connect(master);
+
+    const feedbackGain = ctx.createGain();
+    feedbackGain.gain.value = 0;
+    delayFeedbackRef.current = feedbackGain;
 
     const noiseBuffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
     const noiseData = noiseBuffer.getChannelData(0);
@@ -82,7 +117,6 @@ export function useAudioEngine() {
     }
     noiseBufferRef.current = noiseBuffer;
 
-    // 创建复用的效果发送节点
     const reverbSendGain = ctx.createGain();
     reverbSendGain.gain.value = 1.0;
     reverbSendGain.connect(convolver);
@@ -99,338 +133,480 @@ export function useAudioEngine() {
     dryGainNodeRef.current = dryGainNode;
 
     return ctx;
-  };
+  }, []);
 
   function generateReverbIR(ctx, duration, decay) {
     const sampleRate = ctx.sampleRate;
-    const length = sampleRate * duration;
+    const length = Math.floor(sampleRate * duration);
     const buffer = ctx.createBuffer(2, length, sampleRate);
-    
     for (let channel = 0; channel < 2; channel++) {
       const data = buffer.getChannelData(channel);
       for (let i = 0; i < length; i++) {
         const t = i / length;
-        const envelope = Math.pow(1 - t, decay);
-        data[i] = (Math.random() * 2 - 1) * envelope;
+        data[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, decay);
       }
     }
     return buffer;
   }
 
-  function applyEnvelope(gainNode, ctx, preset, vol, duration) {
-    const now = ctx.currentTime;
-    const { attack = 0.01, decay = 0.1, sustain = 0.5, release = 0.3 } = preset;
-    
-    const safeVol = Math.min(vol, 0.4);
-    const timeConstant = 0.003;
-    
-    gainNode.gain.setValueAtTime(0.0001, now);
-    gainNode.gain.setTargetAtTime(safeVol, now, timeConstant);
-    
-    const decayEnd = now + attack + decay;
-    gainNode.gain.setTargetAtTime(safeVol * Math.max(sustain, 0.001), decayEnd, timeConstant);
-    
-    const noteEnd = now + duration;
+  function applyEnvelope(gainNode, startTime, preset, vol, duration) {
+    const { attack = 0.005, decay = 0.05, sustain = 0.5, release = 0.1 } = preset;
+    const safeVol = Math.min(vol, 0.25);
+    const tc = 0.003; // 更短的时间常数，减少拖尾
+
+    gainNode.gain.setValueAtTime(0.0001, startTime);
+    gainNode.gain.setTargetAtTime(safeVol, startTime, tc);
+
+    const decayEnd = startTime + attack + decay;
+    gainNode.gain.setTargetAtTime(safeVol * Math.max(sustain, 0.001), decayEnd, tc);
+
+    const noteEnd = startTime + duration;
     gainNode.gain.setValueAtTime(safeVol * Math.max(sustain, 0.001), noteEnd);
-    
-    gainNode.gain.setTargetAtTime(0.0001, noteEnd, timeConstant);
-    
-    return noteEnd + release + 0.1;
+    gainNode.gain.setTargetAtTime(0.0001, noteEnd, tc);
+
+    // 返回相对时长，不是绝对时间
+    return duration + release + 0.02;
   }
 
-  function playSynthNote(pitch, duration, velocity, program) {
+  // 调度合成器音符 - 返回所有创建的节点用于后续清理
+  function scheduleSynthNote(whenSec, pitch, duration, velocity, program) {
     const ctx = audioCtxRef.current;
-    if (!ctx) return;
-    
+    if (!ctx) return null;
+
     const preset = getOscillatorPreset(program);
     const midi = noteToMidi(pitch);
     const freq = 440 * Math.pow(2, (midi - 69) / 12);
-    const vol = (velocity / 127) * 0.3;
+    const vol = (velocity / 127) * 0.2;
 
     if (preset.isDrum) {
-      playDrumSound(preset, vol, duration);
-      return;
+      return scheduleDrumSound(whenSec, preset, vol, duration);
     }
 
+    const allNodes = [];
+    const oscillators = [];
+    const sources = [];
+
+    // 使用节点池获取增益节点
     const masterGain = ctx.createGain();
-    const totalDuration = applyEnvelope(masterGain, ctx, preset, vol, duration);
+    allNodes.push(masterGain);
+    const totalDuration = applyEnvelope(masterGain, whenSec, preset, vol, duration);
 
     const harmonics = preset.harmonics || [1];
-    const oscillators = [];
-    
-    harmonics.forEach((amp, idx) => {
-      if (amp <= 0) return;
-      const osc = ctx.createOscillator();
-      const harmGain = ctx.createGain();
-      
-      osc.frequency.value = freq * (idx + 1);
-      osc.detune.value = (Math.random() - 0.5) * 6;
-      
-      harmGain.gain.value = amp * 0.5;
-      
-      osc.connect(harmGain);
-      harmGain.connect(masterGain);
-      
-      oscillators.push(osc);
-    });
+    const activeHarmonics = harmonics.filter(amp => amp > 0);
 
-    if (harmonics.length <= 1) {
+    // 优化：如果只有一个谐波，直接连接，减少 gain 节点
+    if (activeHarmonics.length === 1) {
       const osc = ctx.createOscillator();
       osc.type = preset.type || 'sine';
       osc.frequency.value = freq;
       osc.detune.value = (Math.random() - 0.5) * 4;
       osc.connect(masterGain);
       oscillators.push(osc);
+    } else {
+      // 多个谐波时才使用独立的 gain 节点
+      harmonics.forEach((amp, idx) => {
+        if (amp <= 0) return;
+        const osc = ctx.createOscillator();
+        osc.type = idx === 0 ? (preset.type || 'sine') : 'sine';
+        osc.frequency.value = freq * (idx + 1);
+        osc.detune.value = (Math.random() - 0.5) * 4;
+        
+        // 对于非基础频率的谐波，使用更简单的连接方式
+        if (idx === 0) {
+          osc.connect(masterGain);
+        } else {
+          const harmGain = ctx.createGain();
+          harmGain.gain.value = amp * 0.25;
+          osc.connect(harmGain);
+          harmGain.connect(masterGain);
+          allNodes.push(harmGain);
+        }
+        oscillators.push(osc);
+      });
     }
 
+    if (oscillators.length === 0) {
+      const osc = ctx.createOscillator();
+      osc.type = preset.type || 'sine';
+      osc.frequency.value = freq;
+      osc.detune.value = (Math.random() - 0.5) * 3;
+      osc.connect(masterGain);
+      oscillators.push(osc);
+    }
+
+    // 优化：使用更简单的滤波器设置
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
     filter.frequency.value = Math.min(freq * 6, 12000);
-    filter.Q.value = 0.7;
-    
+    filter.Q.value = 0.5; // 降低 Q 值，减少计算
+    allNodes.push(filter);
+
     masterGain.connect(filter);
-    
-    // 连接到复用的效果节点
     filter.connect(dryGainNodeRef.current);
     filter.connect(reverbSendGainRef.current);
     filter.connect(delaySendGainRef.current);
 
-    const stopTime = ctx.currentTime + totalDuration;
+    const stopTime = whenSec + totalDuration;
     oscillators.forEach(osc => {
-      osc.start();
+      osc.start(whenSec);
       osc.stop(stopTime);
     });
+
+    return { oscillators, sources, allNodes, stopTime };
   }
 
-  function playDrumSound(preset, vol, duration) {
+  function scheduleDrumSound(whenSec, preset, vol, duration) {
     const ctx = audioCtxRef.current;
-    if (!ctx) return;
-    const now = ctx.currentTime;
+    if (!ctx) return null;
 
     const { attack = 0.001, decay = 0.05, release = 0.05, freq, isCymbal, isMetallic, isShaker } = preset;
-    
-    const safeVol = Math.min(vol, 0.4);
-    const timeConstant = 0.002;
+    const safeVol = Math.min(vol, 0.35);
+    const tc = 0.002;
+    const oscillators = [];
+    const sources = [];
+    const allNodes = [];
 
     if (isShaker) {
       const source = ctx.createBufferSource();
       source.buffer = noiseBufferRef.current;
-      
       const hpf = ctx.createBiquadFilter();
       hpf.type = 'highpass';
       hpf.frequency.value = 6000;
-      
       const gain = ctx.createGain();
-      gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.setTargetAtTime(safeVol * 0.3, now + attack, timeConstant);
-      gain.gain.setTargetAtTime(0.0001, now + decay + release, timeConstant);
-      
+      gain.gain.setValueAtTime(0.0001, whenSec);
+      gain.gain.setTargetAtTime(safeVol * 0.3, whenSec + attack, tc);
+      gain.gain.setTargetAtTime(0.0001, whenSec + decay + release, tc);
       source.connect(hpf);
       hpf.connect(gain);
       gain.connect(dryGainNodeRef.current);
       gain.connect(reverbSendGainRef.current);
-      source.start(now);
-      source.stop(now + decay + release + 0.05);
-      return;
+      source.start(whenSec);
+      const stopT = whenSec + decay + release + 0.05;
+      source.stop(stopT);
+      sources.push(source);
+      allNodes.push(hpf, gain);
+      return { oscillators, sources, allNodes, stopTime: stopT };
     }
 
     if (isCymbal || isMetallic) {
       const noiseSource = ctx.createBufferSource();
       noiseSource.buffer = noiseBufferRef.current;
-      
       const bpf = ctx.createBiquadFilter();
       bpf.type = 'bandpass';
       bpf.frequency.value = isCymbal ? 8000 : (freq || 2000);
       bpf.Q.value = isMetallic ? 20 : 5;
-      
       const gain = ctx.createGain();
-      gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.setTargetAtTime(safeVol * 0.25, now + attack, timeConstant);
-      gain.gain.setTargetAtTime(0.0001, now + decay + release + 0.1, timeConstant);
-      
+      gain.gain.setValueAtTime(0.0001, whenSec);
+      gain.gain.setTargetAtTime(safeVol * 0.25, whenSec + attack, tc);
+      gain.gain.setTargetAtTime(0.0001, whenSec + decay + release + 0.1, tc);
       noiseSource.connect(bpf);
       bpf.connect(gain);
       gain.connect(dryGainNodeRef.current);
       gain.connect(reverbSendGainRef.current);
-      noiseSource.start(now);
-      noiseSource.stop(now + decay + release + 0.2);
+      const stopT = whenSec + decay + release + 0.2;
+      noiseSource.start(whenSec);
+      noiseSource.stop(stopT);
+      sources.push(noiseSource);
+      allNodes.push(bpf, gain);
 
       if (isMetallic) {
         const osc = ctx.createOscillator();
         osc.type = 'sine';
         osc.frequency.value = freq || 2000;
         const oscGain = ctx.createGain();
-        oscGain.gain.setValueAtTime(0.0001, now);
-        oscGain.gain.setTargetAtTime(safeVol * 0.1, now + attack, timeConstant);
-        oscGain.gain.setTargetAtTime(0.0001, now + release + 0.1, timeConstant);
+        oscGain.gain.setValueAtTime(0.0001, whenSec);
+        oscGain.gain.setTargetAtTime(safeVol * 0.1, whenSec + attack, tc);
+        oscGain.gain.setTargetAtTime(0.0001, whenSec + release + 0.1, tc);
         osc.connect(oscGain);
         oscGain.connect(dryGainNodeRef.current);
-        osc.start(now);
-        osc.stop(now + release + 0.2);
+        osc.start(whenSec);
+        osc.stop(whenSec + release + 0.2);
+        oscillators.push(osc);
+        allNodes.push(oscGain);
       }
-      return;
+      return { oscillators, sources, allNodes, stopTime: stopT };
     }
 
+    // 普通鼓声
     const noiseSource = ctx.createBufferSource();
     noiseSource.buffer = noiseBufferRef.current;
-    
     const noiseFilter = ctx.createBiquadFilter();
     noiseFilter.type = 'bandpass';
     noiseFilter.frequency.value = freq ? freq * 3 : 3000;
     noiseFilter.Q.value = 1.5;
-    
     const noiseGain = ctx.createGain();
-    noiseGain.gain.setValueAtTime(0.0001, now);
-    noiseGain.gain.setTargetAtTime(safeVol * 0.4, now + attack, timeConstant);
-    noiseGain.gain.setTargetAtTime(0.0001, now + decay + 0.02, timeConstant);
-    
+    noiseGain.gain.setValueAtTime(0.0001, whenSec);
+    noiseGain.gain.setTargetAtTime(safeVol * 0.4, whenSec + attack, tc);
+    noiseGain.gain.setTargetAtTime(0.0001, whenSec + decay + 0.02, tc);
     noiseSource.connect(noiseFilter);
     noiseFilter.connect(noiseGain);
     noiseGain.connect(dryGainNodeRef.current);
     noiseGain.connect(reverbSendGainRef.current);
-    noiseSource.start(now);
-    noiseSource.stop(now + decay + 0.1);
+    noiseSource.start(whenSec);
+    noiseSource.stop(whenSec + decay + 0.1);
+    sources.push(noiseSource);
+    allNodes.push(noiseFilter, noiseGain);
 
     const bodyFreq = freq || 150;
     const osc = ctx.createOscillator();
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(bodyFreq * 2.5, now);
-    osc.frequency.exponentialRampToValueAtTime(bodyFreq, now + 0.03);
-    
+    osc.frequency.setValueAtTime(bodyFreq * 2.5, whenSec);
+    osc.frequency.exponentialRampToValueAtTime(bodyFreq, whenSec + 0.03);
     const bodyGain = ctx.createGain();
-    bodyGain.gain.setValueAtTime(0.0001, now);
-    bodyGain.gain.setTargetAtTime(safeVol * 0.5, now + attack, timeConstant);
-    bodyGain.gain.setTargetAtTime(0.0001, now + decay + release + 0.05, timeConstant);
-    
+    bodyGain.gain.setValueAtTime(0.0001, whenSec);
+    bodyGain.gain.setTargetAtTime(safeVol * 0.5, whenSec + attack, tc);
+    bodyGain.gain.setTargetAtTime(0.0001, whenSec + decay + release + 0.05, tc);
     osc.connect(bodyGain);
     bodyGain.connect(dryGainNodeRef.current);
     bodyGain.connect(reverbSendGainRef.current);
-    osc.start(now);
-    osc.stop(now + decay + release + 0.1);
+    const stopT = whenSec + decay + release + 0.1;
+    osc.start(whenSec);
+    osc.stop(stopT);
+    oscillators.push(osc);
+    allNodes.push(bodyGain);
+
+    return { oscillators, sources, allNodes, stopTime: stopT };
   }
 
-  function playSF2Sample(pitch, duration, velocity, program) {
+  function scheduleSF2Sample(whenSec, pitch, duration, velocity, program) {
     const ctx = audioCtxRef.current;
     if (!ctx || !sf2DataRef.current) {
-      playSynthNote(pitch, duration, velocity, program);
-      return;
+      return scheduleSynthNote(whenSec, pitch, duration, velocity, program);
     }
 
     const midi = noteToMidi(pitch);
-    const vol = (velocity / 127) * 0.5;
+    const vol = (velocity / 127) * 0.25; // 降低音量防止削波
     const presets = sf2DataRef.current.presets;
-    
     const preset = presets.find(p => p.program === program) || presets[0];
     if (!preset || !preset.samples || preset.samples.length === 0) {
-      playSynthNote(pitch, duration, velocity, program);
-      return;
+      return scheduleSynthNote(whenSec, pitch, duration, velocity, program);
     }
 
     let bestSample = preset.samples[0];
     let minDist = Infinity;
     for (const sample of preset.samples) {
       const dist = Math.abs((sample.rootKey || 60) - midi);
-      if (dist < minDist) {
-        minDist = dist;
-        bestSample = sample;
-      }
+      if (dist < minDist) { minDist = dist; bestSample = sample; }
     }
 
     if (!bestSample.buffer) {
-      playSynthNote(pitch, duration, velocity, program);
-      return;
+      return scheduleSynthNote(whenSec, pitch, duration, velocity, program);
     }
 
-    const now = ctx.currentTime;
     const source = ctx.createBufferSource();
     source.buffer = bestSample.buffer;
-    
     const rootKey = bestSample.rootKey || 60;
-    const pitchDiff = midi - rootKey;
-    source.playbackRate.value = Math.pow(2, pitchDiff / 12);
+    source.playbackRate.value = Math.pow(2, (midi - rootKey) / 12);
 
     const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(vol, now + 0.005);
-    gain.gain.setValueAtTime(vol, now + duration);
-    gain.gain.linearRampToValueAtTime(0.0001, now + duration + 0.05);
+    // 使用 setTargetAtTime 避免爆音
+    gain.gain.setValueAtTime(0.0001, whenSec);
+    gain.gain.setTargetAtTime(vol, whenSec, 0.008); // 8ms 攻击时间
+    gain.gain.setTargetAtTime(0.0001, whenSec + duration, 0.015); // 15ms 释放时间
 
     source.connect(gain);
     gain.connect(dryGainNodeRef.current);
     gain.connect(reverbSendGainRef.current);
     gain.connect(delaySendGainRef.current);
-    
-    source.start(now);
-    source.stop(now + duration + 0.1);
+
+    const stopT = whenSec + duration + 0.1;
+    source.start(whenSec);
+    source.stop(stopT);
+
+    return { oscillators: [], sources: [source], allNodes: [gain], stopTime: stopT };
   }
 
-  const loadNetworkInstrument = async (program) => {
-    if (!audioCtxRef.current) await initAudio();
+  function scheduleMetronomeClick(whenSec, isDownbeat) {
+    const ctx = audioCtxRef.current;
+    if (!ctx) return null;
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = isDownbeat ? 1800 : 1200;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, whenSec);
+    gain.gain.setTargetAtTime(0.12, whenSec, 0.001);
+    gain.gain.setTargetAtTime(0.0001, whenSec + 0.05, 0.005);
+    osc.connect(gain);
+    gain.connect(masterGainRef.current);
+    osc.start(whenSec);
+    osc.stop(whenSec + 0.08);
+    return { oscillators: [osc], sources: [], allNodes: [gain], stopTime: whenSec + 0.08 };
+  }
+
+  // 在音符停止后断开所有节点
+  function disconnectNodeGroup(group) {
+    if (!group) return;
     try {
-      const name = 'acoustic_grand_piano';
-      const inst = await Soundfont.instrument(audioCtxRef.current, name, {
-        soundfont: 'MusyngKite',
-        gain: 0.7,
+      group.allNodes.forEach(n => {
+        try {
+          n.disconnect();
+        } catch(e) {}
       });
-      instrumentRef.current = inst;
-    } catch (err) {
-      console.warn("Network instrument failed", err);
-      instrumentRef.current = null;
-    }
-  };
+      group.oscillators.forEach(o => {
+        try {
+          o.disconnect();
+        } catch(e) {}
+      });
+      group.sources.forEach(s => {
+        try {
+          s.disconnect();
+        } catch(e) {}
+      });
+    } catch(e) {}
+  }
 
-  const loadSF2 = async (arrayBuffer) => {
-    await initAudio();
-    try {
-      const sf2Data = parseSF2(arrayBuffer);
-      sf2DataRef.current = sf2Data;
-      
-      const ctx = audioCtxRef.current;
-      const decodedBuffers = {};
-      
-      for (const preset of sf2Data.presets) {
-        for (const sample of (preset.samples || [])) {
-          if (sample.audioData && !decodedBuffers[sample.name]) {
-            try {
-              const audioBuffer = await ctx.decodeAudioData(sample.audioData.slice(0));
-              decodedBuffers[sample.name] = audioBuffer;
-              sample.buffer = audioBuffer;
-            } catch (e) {
-              console.warn('Failed to decode sample:', sample.name, e);
-            }
-          }
-        }
+  // 清理所有活跃节点（停止/暂停时调用）
+  const cleanupAllNodes = useCallback(() => {
+    const ctx = audioCtxRef.current;
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    activeNodeGroupsRef.current.forEach(group => {
+      if (group.stopTime > now) {
+        group.oscillators.forEach(osc => { try { osc.stop(now + 0.01); } catch(e) {} });
+        group.sources.forEach(src => { try { src.stop(now + 0.01); } catch(e) {} });
       }
-      sf2BuffersRef.current = decodedBuffers;
-      setSoundSource('sf2');
-      return { success: true, name: sf2Data.name || 'SF2' };
-    } catch (err) {
-      console.error('SF2 load failed:', err);
-      return { success: false, name: '' };
-    }
-  };
+      disconnectNodeGroup(group);
+    });
+    activeNodeGroupsRef.current = [];
+  }, []);
 
-  const playNote = async (pitch, duration, velocity, program = 0) => {
+  // 前瞻调度器核心 - 使用动态缓冲区参数
+  const runScheduler = useCallback(() => {
+    if (!isPlayingRef.current || isPausedRef.current) return;
+    const ctx = audioCtxRef.current;
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    const lookahead = now + lookaheadRef.current;
+    const events = eventsRef.current;
+    const src = soundSourceRef.current;
+
+    // 清理已完成的节点组
+    activeNodeGroupsRef.current = activeNodeGroupsRef.current.filter(group => {
+      if (group.stopTime <= now) {
+        disconnectNodeGroup(group);
+        return false;
+      }
+      return true;
+    });
+
+    // 调度即将到达的音符
+    while (nextEventIndexRef.current < events.length) {
+      const ev = events[nextEventIndexRef.current];
+      const whenSec = startTimeRef.current + ev.time;
+
+      if (whenSec > lookahead) break;
+
+      // 复音数限制
+      if (activeNodeGroupsRef.current.length >= MAX_POLYPHONY) break;
+
+      let group = null;
+      if (src === 'network' && instrumentRef.current) {
+        const delayMs = Math.max(0, (whenSec - now) * 1000);
+        const tid = setTimeout(() => {
+          if (isPlayingRef.current && !isPausedRef.current) {
+            const v = (ev.velocity / 127) * 0.5;
+            instrumentRef.current.play(ev.pitch, ctx.currentTime, { gain: v, duration: ev.duration });
+          }
+        }, delayMs);
+        scheduledTimeoutsRef.current.push(tid);
+      } else if (src === 'sf2' && sf2DataRef.current) {
+        group = scheduleSF2Sample(whenSec, ev.pitch, ev.duration, ev.velocity, ev.program);
+      } else {
+        group = scheduleSynthNote(whenSec, ev.pitch, ev.duration, ev.velocity, ev.program);
+      }
+
+      if (group) {
+        activeNodeGroupsRef.current.push(group);
+      }
+
+      nextEventIndexRef.current++;
+    }
+
+    // 节拍器调度
+    if (metronomeOnRef.current) {
+      const bpm = bpmRef.current;
+      const beatInterval = 60 / bpm;
+      const total = totalDurationRef.current;
+
+      while (true) {
+        const beatTime = startTimeRef.current + nextMetronomeIndexRef.current * beatInterval;
+        if (beatTime > lookahead) break;
+        if (beatTime > startTimeRef.current + total) break;
+
+        const isDownbeat = nextMetronomeIndexRef.current % 4 === 0;
+        const group = scheduleMetronomeClick(beatTime, isDownbeat);
+        if (group) {
+          activeNodeGroupsRef.current.push(group);
+        }
+        nextMetronomeIndexRef.current++;
+      }
+    }
+  }, []);
+
+  // 即时播放一个音符（用于试听）
+  const playNote = useCallback(async (pitch, duration, velocity, program = 0) => {
     const ctx = audioCtxRef.current;
     if (!ctx) return;
     if (ctx.state === 'suspended') await ctx.resume();
 
-    if (soundSource === 'network' && instrumentRef.current) {
-      const vol = (velocity / 127) * 0.5;
-      instrumentRef.current.play(pitch, ctx.currentTime, { gain: vol, duration });
-    } else if (soundSource === 'sf2' && sf2DataRef.current) {
-      playSF2Sample(pitch, duration, velocity, program);
-    } else {
-      playSynthNote(pitch, duration, velocity, program);
-    }
-  };
+    const when = ctx.currentTime;
+    const src = soundSourceRef.current;
 
-  const startPlayback = useCallback(async (tracks) => {
-    if (isPlaying) stopPlayback();
+    let group = null;
+    if (src === 'network' && instrumentRef.current) {
+      const vol = (velocity / 127) * 0.5;
+      instrumentRef.current.play(pitch, when, { gain: vol, duration });
+    } else if (src === 'sf2' && sf2DataRef.current) {
+      group = scheduleSF2Sample(when, pitch, duration, velocity, program);
+    } else {
+      group = scheduleSynthNote(when, pitch, duration, velocity, program);
+    }
+
+    // 试听音符也需要跟踪并在结束后清理
+    if (group) {
+      const cleanupDelay = (group.stopTime - when) * 1000 + 100;
+      setTimeout(() => disconnectNodeGroup(group), cleanupDelay);
+    }
+  }, []);
+
+  const stopPlayback = useCallback(() => {
+    isPlayingRef.current = false;
+    isPausedRef.current = false;
+
+    if (playIntervalRef.current) {
+      clearInterval(playIntervalRef.current);
+      playIntervalRef.current = null;
+    }
+    if (schedulerTimerRef.current) {
+      clearInterval(schedulerTimerRef.current);
+      schedulerTimerRef.current = null;
+    }
+    scheduledTimeoutsRef.current.forEach(tid => clearTimeout(tid));
+    scheduledTimeoutsRef.current = [];
+
+    cleanupAllNodes();
+
+    eventsRef.current = [];
+    nextEventIndexRef.current = 0;
+    nextMetronomeIndexRef.current = 0;
+    pauseTimeRef.current = 0;
+
+    setIsPlaying(false);
+    setIsPaused(false);
+    setCurrentTime(0);
+  }, [cleanupAllNodes]);
+
+  const startPlayback = useCallback(async (tracks, bpm = 120) => {
+    if (isPlayingRef.current) stopPlayback();
+    // 等一帧让 stopPlayback 完成清理
+    await new Promise(r => setTimeout(r, 20));
+
     await initAudio();
     const ctx = audioCtxRef.current;
     if (ctx.state === 'suspended') await ctx.resume();
 
+    bpmRef.current = bpm;
     let events = [];
     tracks.forEach(track => {
       if (track.mute) return;
@@ -444,64 +620,143 @@ export function useAudioEngine() {
         });
       });
     });
-    events.sort((a,b) => a.time - b.time);
+    events.sort((a, b) => a.time - b.time);
     const total = events.length ? Math.max(...events.map(e => e.time + e.duration)) : 0;
     setTotalDuration(total);
+    totalDurationRef.current = total;
     if (total === 0) return;
 
-    const startTime = ctx.currentTime;
+    eventsRef.current = events;
+    nextEventIndexRef.current = 0;
+    nextMetronomeIndexRef.current = 0;
+
+    const startTime = ctx.currentTime + 0.1;
     startTimeRef.current = startTime;
-    setIsPlaying(true);
+    pauseTimeRef.current = 0;
+
     isPlayingRef.current = true;
+    isPausedRef.current = false;
+    setIsPlaying(true);
+    setIsPaused(false);
 
-    for (const ev of events) {
-      const timeoutId = setTimeout(() => {
-        if (isPlayingRef.current) {
-          playNote(ev.pitch, ev.duration, ev.velocity, ev.program);
-        }
-      }, ev.time * 1000);
-      scheduledEventsRef.current.push(timeoutId);
-    }
+    // 启动前瞻调度器
+    schedulerTimerRef.current = setInterval(runScheduler, schedulerMsRef.current);
 
+    // 不再用 setInterval 更新 currentTime，改由组件用 requestAnimationFrame 读取
+    // 只保留一个检查播放结束的定时器
     playIntervalRef.current = setInterval(() => {
       if (!isPlayingRef.current) return;
+      if (isPausedRef.current) return;
       const elapsed = ctx.currentTime - startTime;
-      setCurrentTime(Math.min(elapsed, total));
-      if (elapsed >= total) {
+      if (elapsed >= total + 0.5) {
         stopPlayback();
       }
-    }, 50);
-  }, [isPlaying, soundSource]);
+    }, 200);
+  }, [initAudio, stopPlayback, runScheduler]);
 
-  const stopPlayback = useCallback(() => {
-    if (playIntervalRef.current) clearInterval(playIntervalRef.current);
-    setIsPlaying(false);
-    setCurrentTime(0);
-    scheduledEventsRef.current.forEach(tid => clearTimeout(tid));
-    scheduledEventsRef.current = [];
-  }, []);
+  const pausePlayback = useCallback(() => {
+    if (!isPlayingRef.current) return;
+    const ctx = audioCtxRef.current;
+    if (!ctx) return;
+
+    isPausedRef.current = true;
+    setIsPaused(true);
+    pauseTimeRef.current = ctx.currentTime - startTimeRef.current;
+
+    // 停止调度器
+    if (schedulerTimerRef.current) {
+      clearInterval(schedulerTimerRef.current);
+      schedulerTimerRef.current = null;
+    }
+
+    // 停止所有正在播放的音符
+    cleanupAllNodes();
+    scheduledTimeoutsRef.current.forEach(tid => clearTimeout(tid));
+    scheduledTimeoutsRef.current = [];
+  }, [cleanupAllNodes]);
+
+  const resumePlayback = useCallback(async (tracks, bpm = 120) => {
+    if (!isPausedRef.current) return;
+    const ctx = audioCtxRef.current;
+    if (!ctx) return;
+
+    isPausedRef.current = false;
+    setIsPaused(false);
+
+    const pauseTime = pauseTimeRef.current;
+    bpmRef.current = bpm;
+
+    // 重新计算起始时间，使 pauseTime 对应新的 startTime
+    const startTime = ctx.currentTime + 0.05;
+    startTimeRef.current = startTime - pauseTime;
+
+    // 重置调度索引，从暂停位置重新开始
+    const events = eventsRef.current;
+    nextEventIndexRef.current = 0;
+    for (let i = 0; i < events.length; i++) {
+      if (events[i].time >= pauseTime - 0.01) {
+        nextEventIndexRef.current = i;
+        break;
+      }
+    }
+
+    // 重置节拍器索引
+    const beatInterval = 60 / bpm;
+    nextMetronomeIndexRef.current = Math.floor(pauseTime / beatInterval);
+
+    // 重新启动调度器
+    schedulerTimerRef.current = setInterval(runScheduler, schedulerMsRef.current);
+  }, [runScheduler]);
 
   const seekTo = (time) => {
-    stopPlayback();
     setCurrentTime(time);
+    pauseTimeRef.current = time;
   };
 
   useEffect(() => {
     initAudio();
-    loadNetworkInstrument(0);
     return () => {
       stopPlayback();
     };
+  }, [initAudio, stopPlayback]);
+
+  // 获取当前播放时间（供组件读取）
+  const getPlaybackTime = useCallback(() => {
+    if (!isPlayingRef.current) return 0;
+    const ctx = audioCtxRef.current;
+    if (!ctx) return 0;
+    return Math.max(0, ctx.currentTime - startTimeRef.current);
+  }, []);
+
+  // 设置播放缓冲区 - 支持字符串预设或数字直接值
+  const setBufferSize = useCallback((size) => {
+    if (typeof size === 'number') {
+      // 数字: 直接的 lookahead 秒数
+      const ms = Math.max(40, Math.min(500, size * 1000));
+      lookaheadRef.current = size;
+      schedulerMsRef.current = Math.floor(ms / 6); // schedule interval ~ lookahead/6
+      setBufferSizeState(size);
+    } else {
+      const preset = BUFFER_PRESETS[size] || BUFFER_PRESETS.medium;
+      bufferSizeRef.current = size;
+      lookaheadRef.current = preset[0];
+      schedulerMsRef.current = preset[1];
+      setBufferSizeState(size);
+    }
   }, []);
 
   return {
     playNote,
-    startPlayback: (tracks) => startPlayback(tracks),
+    startPlayback: (tracks, bpm = 120) => startPlayback(tracks, bpm),
     stopPlayback,
-    seekTo,
+    pausePlayback,
+    resumePlayback: (tracks, bpm = 120) => resumePlayback(tracks, bpm),
     isPlaying,
+    isPaused,
     currentTime,
     totalDuration,
+    getPlaybackTime,
+    seekTo,
     reverbSend,
     setReverbSend: (val) => {
       setReverbSend(val);
@@ -526,9 +781,56 @@ export function useAudioEngine() {
     audioCtxRef,
     soundSource,
     setSoundSource,
-    loadSF2,
+    loadSF2: async (arrayBuffer) => {
+      await initAudio();
+      try {
+        const sf2Data = parseSF2(arrayBuffer);
+        sf2DataRef.current = sf2Data;
+
+        const ctx = audioCtxRef.current;
+        const decodedBuffers = {};
+
+        // 并行解码所有样本以提高性能
+        const decodePromises = [];
+        for (const preset of sf2Data.presets) {
+          for (const sample of (preset.samples || [])) {
+            if (sample.pcmData && !decodedBuffers[sample.name]) {
+              const promise = (async () => {
+                try {
+                  // 直接从 Float32 PCM 数据创建 AudioBuffer
+                  const audioBuffer = ctx.createBuffer(1, sample.pcmData.length, sample.sampleRate);
+                  audioBuffer.getChannelData(0).set(sample.pcmData);
+                  decodedBuffers[sample.name] = audioBuffer;
+                  sample.buffer = audioBuffer;
+                } catch (e) {
+                  console.warn('Failed to create buffer for sample:', sample.name, e);
+                }
+              })();
+              decodePromises.push(promise);
+            }
+          }
+        }
+        
+        await Promise.all(decodePromises);
+        sf2BuffersRef.current = decodedBuffers;
+        setSoundSource('sf2');
+        return { success: true, name: sf2Data.name || 'SF2' };
+      } catch (err) {
+        console.error('SF2 load failed:', err);
+        return { success: false, name: '' };
+      }
+    },
     sf2Loaded: !!sf2DataRef.current,
     initAudio,
+    metronomeOn,
+    setMetronomeOn: (val) => {
+      setMetronomeOn(val);
+      metronomeOnRef.current = val;
+    },
+    bufferSize,
+    setBufferSize,
+    startTimeRef,
+    analyserNodeRef,
   };
 }
 
