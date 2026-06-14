@@ -242,10 +242,10 @@ export async function exportToMp3(
 export async function exportToFlac(audioBuffer: AudioBuffer): Promise<Blob> {
   // 尝试使用 MediaRecorder（如果浏览器支持 FLAC）
   if (typeof MediaRecorder !== 'undefined') {
-    const stream = new MediaStream();
-    const source = new AudioContext().createBufferSource();
+    const ctx = new AudioContext();
+    const source = ctx.createBufferSource();
     source.buffer = audioBuffer;
-    const dest = new AudioContext().createMediaStreamDestination();
+    const dest = ctx.createMediaStreamDestination();
     source.connect(dest);
     
     // 检查是否支持 FLAC
@@ -262,7 +262,10 @@ export async function exportToFlac(audioBuffer: AudioBuffer): Promise<Blob> {
         
         return new Promise((resolve, reject) => {
           recorder.ondataavailable = (e) => chunks.push(e.data);
-          recorder.onstop = () => resolve(new Blob(chunks, { type }));
+          recorder.onstop = () => {
+            ctx.close();
+            resolve(new Blob(chunks, { type }));
+          };
           recorder.onerror = reject;
           
           source.start();
@@ -271,6 +274,7 @@ export async function exportToFlac(audioBuffer: AudioBuffer): Promise<Blob> {
         });
       }
     }
+    ctx.close();
   }
 
   // 降级到 WAV（如果 FLAC 不支持）
@@ -284,10 +288,10 @@ export async function exportToFlac(audioBuffer: AudioBuffer): Promise<Blob> {
 export async function exportToAac(audioBuffer: AudioBuffer): Promise<Blob> {
   // 尝试使用 MediaRecorder
   if (typeof MediaRecorder !== 'undefined') {
-    const stream = new MediaStream();
-    const source = new AudioContext().createBufferSource();
+    const ctx = new AudioContext();
+    const source = ctx.createBufferSource();
     source.buffer = audioBuffer;
-    const dest = new AudioContext().createMediaStreamDestination();
+    const dest = ctx.createMediaStreamDestination();
     source.connect(dest);
     
     const types = [
@@ -303,7 +307,10 @@ export async function exportToAac(audioBuffer: AudioBuffer): Promise<Blob> {
         
         return new Promise((resolve, reject) => {
           recorder.ondataavailable = (e) => chunks.push(e.data);
-          recorder.onstop = () => resolve(new Blob(chunks, { type }));
+          recorder.onstop = () => {
+            ctx.close();
+            resolve(new Blob(chunks, { type }));
+          };
           recorder.onerror = reject;
           
           source.start();
@@ -312,6 +319,7 @@ export async function exportToAac(audioBuffer: AudioBuffer): Promise<Blob> {
         });
       }
     }
+    ctx.close();
   }
 
   // 降级到 WAV

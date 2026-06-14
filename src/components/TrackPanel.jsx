@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Icons } from './Icons';
 import { useTranslation } from '../lib/i18n';
 
-const TRACK_COLORS = ['#ff6b6b','#ff922b','#fcc419','#51cf66','#20c997','#339af0','#845ef7','#e64980','#adb5bd','#ff8787','#d8f5a2','#748ffc'];
+const TRACK_COLORS = ['#339af0','#ff6b6b','#ff922b','#fcc419','#51cf66','#20c997','#845ef7','#e64980','#adb5bd','#ff8787','#d8f5a2','#748ffc'];
 
 const GM_INSTRUMENTS = [
   { id: 0, zh: "大钢琴", en: "Acoustic Grand Piano" },
@@ -185,8 +185,11 @@ export default function TrackPanel({
             }}>
               <div onClick={() => onSelectTrack(track.id)} style={{
                 background: isSel ? 'var(--track-hover)' : 'var(--track-bg)',
-                padding: 6, borderRadius: 6, border: isSel ? '1px solid var(--text-muted)' : '1px solid var(--border)',
-                borderLeft: `3px solid ${color}`, cursor: 'pointer',
+                padding: 6, borderRadius: 6,
+                borderTopWidth: 1, borderTopStyle: 'solid', borderTopColor: isSel ? 'var(--text-muted)' : 'var(--border)',
+                borderRightWidth: 1, borderRightStyle: 'solid', borderRightColor: isSel ? 'var(--text-muted)' : 'var(--border)',
+                borderBottomWidth: 1, borderBottomStyle: 'solid', borderBottomColor: isSel ? 'var(--text-muted)' : 'var(--border)',
+                borderLeftWidth: 3, borderLeftStyle: 'solid', borderLeftColor: color, cursor: 'pointer',
               }}>
                 {/* 名称行 */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>

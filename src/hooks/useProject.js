@@ -164,18 +164,22 @@ export function useProject() {
 
   // 导入 MIDI 数据（替换当前工程）
   const importMidiData = useCallback((midiData) => {
+    if (!midiData || !midiData.tracks || !Array.isArray(midiData.tracks)) {
+      console.error('Invalid MIDI data:', midiData);
+      return;
+    }
     pushUndo();
     const newTracks = midiData.tracks.map((t, idx) => ({
       id: generateId(),
       name: t.name || `Track ${idx+1}`,
-      program: t.program,
-      notes: t.notes,
-      volume: 80,
-      pan: 64,
-      mute: false,
+      program: t.program || 0,
+      notes: Array.isArray(t.notes) ? t.notes : [],
+      volume: t.volume || 80,
+      pan: t.pan || 64,
+      mute: t.mute || false,
     }));
     setTracks(newTracks);
-    setBpm(midiData.bpm);
+    setBpm(midiData.bpm || 120);
     setMeta(prev => ({ ...prev, title: midiData.title || "", copyright: midiData.copyright || "" }));
     setCurrentTrackId(newTracks[0]?.id);
   }, [pushUndo]);

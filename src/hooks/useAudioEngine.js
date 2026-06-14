@@ -4,18 +4,20 @@ import { getOscillatorPreset } from '../lib/oscillatorPresets';
 import { parseSF2 } from '../lib/sf2Parser';
 
 // 前瞻调度器默认参数
-const MAX_POLYPHONY = 48; // 提高复音数上限
+const MAX_POLYPHONY = 24; // 降低复音数上限，减少 CPU 占用
 
 // 缓冲区预设: [lookahead秒, schedulerIntervalMs]
+// 更大的 lookahead 和更短的 interval 可以减少卡顿
 const BUFFER_PRESETS = {
-  short: [0.08, 12],  // 更短的 lookahead，更频繁的调度
-  medium: [0.15, 25],
-  long: [0.3, 60],
+  short: [0.15, 20],   // 低延迟模式
+  medium: [0.3, 25],   // 平衡模式
+  long: [0.6, 40],     // 高稳定性模式
 };
 
 export function useAudioEngine() {
   const audioCtxRef = useRef(null);
   const masterGainRef = useRef(null);
+  const compressorRef = useRef(null);
   const dryGainRef = useRef(null);
   const wetReverbGainRef = useRef(null);
   const wetDelayGainRef = useRef(null);
@@ -25,6 +27,7 @@ export function useAudioEngine() {
   const instrumentRef = useRef(null);
   const sf2DataRef = useRef(null);
   const sf2BuffersRef = useRef({});
+  const sf2PresetMapRef = useRef(new Map()); // 缓存 program -> preset 映射
   const [soundSource, setSoundSource] = useState('default');
   const [reverbSend, setReverbSend] = useState(0.15);
   const [delaySend, setDelaySend] = useState(0.1);
@@ -59,6 +62,8 @@ export function useAudioEngine() {
   const nextMetronomeIndexRef = useRef(0);
   const activeNodeGroupsRef = useRef([]);
   const totalDurationRef = useRef(0);
+  const [performanceWarning, setPerformanceWarning] = useState(false);
+  const schedulerLagCountRef = useRef(0); // 调度器延迟计数
 
   useEffect(() => { soundSourceRef.current = soundSource; }, [soundSource]);
   useEffect(() => { metronomeOnRef.current = metronomeOn; }, [metronomeOn]);
@@ -72,11 +77,21 @@ export function useAudioEngine() {
     master.gain.value = 0.7;
     masterGainRef.current = master;
 
-    // 示波器分析器节点 - 插入在 master 和 destination 之间
+    // 添加动态压缩器防止爆音
+    const compressor = ctx.createDynamicsCompressor();
+    compressor.threshold.value = -24; // 阈值 (dB)
+    compressor.knee.value = 30; // 拐点范围
+    compressor.ratio.value = 12; // 压缩比
+    compressor.attack.value = 0.003; // 攻击时间
+    compressor.release.value = 0.25; // 释放时间
+    compressorRef.current = compressor;
+
+    // 示波器分析器节点 - 插入在 compressor 和 destination 之间
     const analyser = ctx.createAnalyser();
-    analyser.fftSize = 256;
+    analyser.fftSize = 128; // 降低 FFT 大小，减少 CPU 占用
     analyser.smoothingTimeConstant = 0.8;
-    master.connect(analyser);
+    master.connect(compressor);
+    compressor.connect(analyser);
     analyser.connect(ctx.destination);
     analyserNodeRef.current = analyser;
 
@@ -86,7 +101,7 @@ export function useAudioEngine() {
     dryGainRef.current = dry;
 
     const convolver = ctx.createConvolver();
-    convolver.buffer = generateReverbIR(ctx, 1.2, 2.0);
+    convolver.buffer = generateReverbIR(ctx, 0.8, 2.5); // 缩短混响时间，减少 CPU 占用
     convolverRef.current = convolver;
 
     const reverbGain = ctx.createGain();
@@ -375,34 +390,72 @@ export function useAudioEngine() {
     }
 
     const midi = noteToMidi(pitch);
-    const vol = (velocity / 127) * 0.25; // 降低音量防止削波
-    const presets = sf2DataRef.current.presets;
-    const preset = presets.find(p => p.program === program) || presets[0];
-    if (!preset || !preset.samples || preset.samples.length === 0) {
+    // 降低音量防止削波爆音
+    const vol = (velocity / 127) * 0.12;
+    
+    // 使用缓存的 preset Map 进行 O(1) 查找
+    let preset = sf2PresetMapRef.current.get(program);
+    if (!preset) {
+      const presets = sf2DataRef.current.presets;
+      preset = presets.find(p => p.program === program) || presets[0];
+      if (preset) {
+        sf2PresetMapRef.current.set(program, preset);
+      }
+    }
+    
+    if (!preset || !preset.sampleIndex) {
       return scheduleSynthNote(whenSec, pitch, duration, velocity, program);
     }
 
-    let bestSample = preset.samples[0];
-    let minDist = Infinity;
-    for (const sample of preset.samples) {
-      const dist = Math.abs((sample.rootKey || 60) - midi);
-      if (dist < minDist) { minDist = dist; bestSample = sample; }
+    // 使用预建的 sampleIndex 数组进行 O(1) 查找
+    let bestSample = preset.sampleIndex[midi];
+    
+    // 如果索引中没有，回退到第一个样本
+    if (!bestSample) {
+      bestSample = preset.sampleIndex[60]; // 默认使用中央 C
     }
 
-    if (!bestSample.buffer) {
+    if (!bestSample) {
+      return scheduleSynthNote(whenSec, pitch, duration, velocity, program);
+    }
+
+    // 延迟创建 AudioBuffer（按需创建并缓存）
+    if (!bestSample.audioBuffer && bestSample.pcmData) {
+      try {
+        const length = bestSample.pcmData.length;
+        const audioBuffer = ctx.createBuffer(1, length, bestSample.sampleRate);
+        const channelData = audioBuffer.getChannelData(0);
+        // 将 Int16 转换为 Float32
+        for (let i = 0; i < length; i++) {
+          channelData[i] = bestSample.pcmData[i] / 32768;
+        }
+        bestSample.audioBuffer = audioBuffer;
+      } catch (e) {
+        console.warn('Failed to create audio buffer:', e);
+        return scheduleSynthNote(whenSec, pitch, duration, velocity, program);
+      }
+    }
+
+    if (!bestSample.audioBuffer) {
       return scheduleSynthNote(whenSec, pitch, duration, velocity, program);
     }
 
     const source = ctx.createBufferSource();
-    source.buffer = bestSample.buffer;
+    source.buffer = bestSample.audioBuffer;
     const rootKey = bestSample.rootKey || 60;
-    source.playbackRate.value = Math.pow(2, (midi - rootKey) / 12);
+    
+    // 计算播放速率，包含 pitchCorrection
+    let playbackRate = Math.pow(2, (midi - rootKey) / 12);
+    if (bestSample.pitchCorrection) {
+      playbackRate *= Math.pow(2, bestSample.pitchCorrection / 1200);
+    }
+    source.playbackRate.value = playbackRate;
 
     const gain = ctx.createGain();
-    // 使用 setTargetAtTime 避免爆音
+    // 增加包络时间防止爆音：20ms attack, 80ms release
     gain.gain.setValueAtTime(0.0001, whenSec);
-    gain.gain.setTargetAtTime(vol, whenSec, 0.008); // 8ms 攻击时间
-    gain.gain.setTargetAtTime(0.0001, whenSec + duration, 0.015); // 15ms 释放时间
+    gain.gain.setTargetAtTime(vol, whenSec, 0.020);
+    gain.gain.setTargetAtTime(0.0001, whenSec + duration, 0.080);
 
     source.connect(gain);
     gain.connect(dryGainNodeRef.current);
@@ -480,6 +533,25 @@ export function useAudioEngine() {
     const lookahead = now + lookaheadRef.current;
     const events = eventsRef.current;
     const src = soundSourceRef.current;
+
+    // 性能检测：检查调度器是否延迟
+    const schedulerTime = performance.now();
+    const expectedTime = startTimeRef.current + (nextEventIndexRef.current > 0 ? eventsRef.current[nextEventIndexRef.current - 1]?.time || 0 : 0);
+    const audioTime = now - startTimeRef.current;
+    if (audioTime > 0 && nextEventIndexRef.current > 0) {
+      const lag = audioTime - expectedTime;
+      if (lag > 0.1) { // 延迟超过 100ms
+        schedulerLagCountRef.current++;
+        if (schedulerLagCountRef.current > 3) {
+          setPerformanceWarning(true);
+        }
+      } else {
+        schedulerLagCountRef.current = Math.max(0, schedulerLagCountRef.current - 1);
+        if (schedulerLagCountRef.current === 0) {
+          setPerformanceWarning(false);
+        }
+      }
+    }
 
     // 清理已完成的节点组
     activeNodeGroupsRef.current = activeNodeGroupsRef.current.filter(group => {
@@ -591,6 +663,8 @@ export function useAudioEngine() {
     nextEventIndexRef.current = 0;
     nextMetronomeIndexRef.current = 0;
     pauseTimeRef.current = 0;
+    schedulerLagCountRef.current = 0;
+    setPerformanceWarning(false);
 
     setIsPlaying(false);
     setIsPaused(false);
@@ -784,36 +858,12 @@ export function useAudioEngine() {
     loadSF2: async (arrayBuffer) => {
       await initAudio();
       try {
-        const sf2Data = parseSF2(arrayBuffer);
+        // 直接传入 audioContext（虽然不再预创建 AudioBuffer，但保留接口兼容性）
+        const sf2Data = parseSF2(arrayBuffer, audioCtxRef.current);
         sf2DataRef.current = sf2Data;
-
-        const ctx = audioCtxRef.current;
-        const decodedBuffers = {};
-
-        // 并行解码所有样本以提高性能
-        const decodePromises = [];
-        for (const preset of sf2Data.presets) {
-          for (const sample of (preset.samples || [])) {
-            if (sample.pcmData && !decodedBuffers[sample.name]) {
-              const promise = (async () => {
-                try {
-                  // 直接从 Float32 PCM 数据创建 AudioBuffer
-                  const audioBuffer = ctx.createBuffer(1, sample.pcmData.length, sample.sampleRate);
-                  audioBuffer.getChannelData(0).set(sample.pcmData);
-                  decodedBuffers[sample.name] = audioBuffer;
-                  sample.buffer = audioBuffer;
-                } catch (e) {
-                  console.warn('Failed to create buffer for sample:', sample.name, e);
-                }
-              })();
-              decodePromises.push(promise);
-            }
-          }
-        }
-        
-        await Promise.all(decodePromises);
-        sf2BuffersRef.current = decodedBuffers;
+        sf2BuffersRef.current = {}; // 不再预加载 buffer，延迟创建
         setSoundSource('sf2');
+        console.log(`SF2 loaded: ${sf2Data.presets.length} presets`);
         return { success: true, name: sf2Data.name || 'SF2' };
       } catch (err) {
         console.error('SF2 load failed:', err);
@@ -831,6 +881,7 @@ export function useAudioEngine() {
     setBufferSize,
     startTimeRef,
     analyserNodeRef,
+    performanceWarning,
   };
 }
 

@@ -109,43 +109,43 @@ export default function Transport({
   }, [isDragging, totalDuration, onSeek]);
 
   return (
-    <div className="controls-bar" style={{ padding: '6px 10px', display: 'flex', gap: 8, alignItems: 'center', borderTop: '1px solid var(--border)', flexShrink: 0, background: 'var(--panel)', flexWrap: 'wrap' }}>
-      {!isPlaying ? (
-        <button onClick={onPlay}>{Icons.Play ? <Icons.Play /> : '▶'}</button>
-      ) : isPaused ? (
-        <button onClick={onResume}>{Icons.Play ? <Icons.Play /> : '▶'}</button>
-      ) : (
-        <button onClick={onPause}>{Icons.Pause ? <Icons.Pause /> : '⏸'}</button>
-      )}
-      <button onClick={onStop} disabled={!isPlaying}>{Icons.Stop ? <Icons.Stop /> : '⏹'}</button>
-      <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-        <input type="checkbox" checked={metronomeOn} onChange={(e) => onMetronomeOnChange(e.target.checked)} />
-        {t.metronome || '节拍器'}
-      </label>
-      <span>BPM</span>
-      <input type="number" value={bpm} onChange={(e) => onBpmChange(parseInt(e.target.value))} style={{ width: '70px' }} />
-      <div 
-        ref={progressBarRef}
-        className="progress-bar" 
-        style={{ width: 160, height: 6, background: 'var(--border)', borderRadius: 3, cursor: 'pointer', position: 'relative' }}
-        onMouseDown={handleSeekMouseDown}
-      >
-        <div ref={progressFillRef} className="progress-fill" style={{ width: `${totalDuration ? (currentTime / totalDuration) * 100 : 0}%`, height: '100%', background: 'var(--accent-hover)', borderRadius: 3, pointerEvents: 'none' }} />
+    <div className="controls-bar" style={{ padding: '6px 10px', display: 'flex', gap: 8, alignItems: 'center', borderTop: '1px solid var(--border)', flexShrink: 0, background: 'var(--panel)', flexWrap: 'wrap', overflow: 'hidden', minHeight: 48 }}>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+        {!isPlaying ? (
+          <button onClick={onPlay}>{Icons.Play ? <Icons.Play /> : '▶'}</button>
+        ) : isPaused ? (
+          <button onClick={onResume}>{Icons.Play ? <Icons.Play /> : '▶'}</button>
+        ) : (
+          <button onClick={onPause}>{Icons.Pause ? <Icons.Pause /> : '⏸'}</button>
+        )}
+        <button onClick={onStop} disabled={!isPlaying}>{Icons.Stop ? <Icons.Stop /> : '⏹'}</button>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <input type="checkbox" checked={metronomeOn} onChange={(e) => onMetronomeOnChange(e.target.checked)} />
+          {t.metronome || '节拍器'}
+        </label>
+        <span>BPM</span>
+        <input type="number" value={bpm} onChange={(e) => onBpmChange(parseInt(e.target.value))} style={{ width: '70px' }} />
       </div>
-      <span ref={timeDisplayRef}>{formatTime(currentTime)} / {formatTime(totalDuration)}</span>
-      <div style={{ marginLeft: 'auto', display: 'flex', gap: '12px', alignItems: 'center' }}>
-        <span>{t.reverb}</span>
-        <input type="range" min="0" max="1" step="0.01" value={reverbSend} onChange={(e) => onReverbSendChange(parseFloat(e.target.value))} style={{ width: '60px' }} />
-        <span>{Math.round(reverbSend * 100)}%</span>
-        <span>{t.delay}</span>
-        <input type="range" min="0" max="1" step="0.01" value={delaySend} onChange={(e) => onDelaySendChange(parseFloat(e.target.value))} style={{ width: '60px' }} />
-        <span>{Math.round(delaySend * 100)}%</span>
-        <span>{t.delayTime}</span>
-        <input type="range" min="0.05" max="1" step="0.01" value={delayTime} onChange={(e) => onDelayTimeChange(parseFloat(e.target.value))} style={{ width: '60px' }} />
-        <span>{Math.round(delayTime * 1000)}ms</span>
-        <span>{t.delayFeedback}</span>
-        <input type="range" min="0" max="0.9" step="0.01" value={delayFeedback} onChange={(e) => onDelayFeedbackChange(parseFloat(e.target.value))} style={{ width: '60px' }} />
-        <span>{Math.round(delayFeedback * 100)}%</span>
+      <div style={{ flex: 1, minWidth: 120, display: 'flex', gap: 6, alignItems: 'center' }}>
+        <div 
+          ref={progressBarRef}
+          className="progress-bar" 
+          style={{ flex: 1, height: 6, background: 'var(--border)', borderRadius: 3, cursor: 'pointer', position: 'relative' }}
+          onMouseDown={handleSeekMouseDown}
+        >
+          <div ref={progressFillRef} className="progress-fill" style={{ width: `${totalDuration ? (currentTime / totalDuration) * 100 : 0}%`, height: '100%', background: 'var(--accent-hover)', borderRadius: 3, pointerEvents: 'none' }} />
+        </div>
+        <span ref={timeDisplayRef} style={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }}>{formatTime(currentTime)} / {formatTime(totalDuration)}</span>
+      </div>
+      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexShrink: 0, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '0.7rem' }}>{t.reverb}</span>
+        <input type="range" min="0" max="1" step="0.01" value={reverbSend} onChange={(e) => onReverbSendChange(parseFloat(e.target.value))} style={{ width: '50px' }} />
+        <span style={{ fontSize: '0.7rem' }}>{t.delay}</span>
+        <input type="range" min="0" max="1" step="0.01" value={delaySend} onChange={(e) => onDelaySendChange(parseFloat(e.target.value))} style={{ width: '50px' }} />
+        <span style={{ fontSize: '0.7rem' }}>{t.delayTime}</span>
+        <input type="range" min="0.05" max="1" step="0.01" value={delayTime} onChange={(e) => onDelayTimeChange(parseFloat(e.target.value))} style={{ width: '50px' }} />
+        <span style={{ fontSize: '0.7rem' }}>{t.delayFeedback}</span>
+        <input type="range" min="0" max="0.9" step="0.01" value={delayFeedback} onChange={(e) => onDelayFeedbackChange(parseFloat(e.target.value))} style={{ width: '50px' }} />
       </div>
     </div>
   );

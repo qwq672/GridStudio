@@ -94,6 +94,7 @@ export default function App() {
 
   const handleNewProject = () => {
     if (hasUnsavedChanges && !confirm(t.confirmNew)) return;
+    audioEngine.stopPlayback();
     setHasUnsavedChanges(false);
     setShowHome(false);
     project.newProject();

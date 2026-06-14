@@ -71,6 +71,7 @@ const Editor = memo(({
         quantizeValue={quantizeValue}
         onQuantizeValueChange={setQuantizeValue}
         onOpenAbout={() => setAboutOpen(true)}
+        performanceWarning={audioEngine.performanceWarning}
       />
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden', padding: 6, gap: 6, minHeight: 0 }}>
         <TrackPanel

@@ -15,6 +15,7 @@ export default function MenuBar({
   quantizeValue = '1/4',
   onQuantizeValueChange = null,
   onOpenAbout = null,
+  performanceWarning = false,
 }) {
   const [activeMenu, setActiveMenu] = useState(null);
   const menuRef = useRef(null);
@@ -51,10 +52,12 @@ export default function MenuBar({
   const handleItemClick = (callback, disabled) => {
     if (disabled) return;
     setActiveMenu(null);
-    callback();
+    if (typeof callback === 'function') {
+      callback();
+    }
   };
 
-  // 示波器动画
+  // 示波器动画 - 优化版：始终显示线条，根据音量变色
   useEffect(() => {
     const canvas = oscCanvasRef.current;
     if (!canvas) return;
@@ -75,16 +78,48 @@ export default function MenuBar({
     const draw = () => {
       oscRafRef.current = requestAnimationFrame(draw);
       const analyser = analyserNodeRef?.current;
-      if (!analyser || !ctx || !canvas) { ctx.clearRect(0, 0, canvas.width || 80, canvas.height || 36); return; }
+      if (!analyser || !ctx || !canvas) {
+        // 无分析器时画一条静态线
+        if (ctx && canvas && canvas.width > 0) {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.beginPath();
+          ctx.strokeStyle = '#4a8a6a';
+          ctx.lineWidth = 2;
+          ctx.moveTo(0, canvas.height / 2);
+          ctx.lineTo(canvas.width, canvas.height / 2);
+          ctx.stroke();
+        }
+        return;
+      }
       const bufferLength = analyser.frequencyBinCount;
       const dataArray = new Uint8Array(bufferLength);
       try { analyser.getByteTimeDomainData(dataArray); } catch (e) { return; }
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      let hasSignal = false;
-      for (let i = 0; i < bufferLength; i++) { if (dataArray[i] > 130 || dataArray[i] < 126) { hasSignal = true; break; } }
-      if (!hasSignal) return;
+
+      // 计算 RMS 音量
+      let sum = 0;
+      let peak = 0;
+      for (let i = 0; i < bufferLength; i++) {
+        const v = (dataArray[i] - 128) / 128;
+        sum += v * v;
+        if (Math.abs(v) > peak) peak = Math.abs(v);
+      }
+      const rms = Math.sqrt(sum / bufferLength);
+
+      // 根据音量决定颜色：静音=绿色线条，中等=青色，大音量=黄色，爆音=红色
+      let color;
+      if (peak > 0.95) {
+        color = '#e04040'; // 爆音红色
+      } else if (rms > 0.15) {
+        color = '#c0a030'; // 大音量黄色
+      } else if (rms > 0.03) {
+        color = '#40b0b0'; // 中等青色
+      } else {
+        color = '#4a8a6a'; // 安静绿色
+      }
+
       ctx.lineWidth = 2;
-      ctx.strokeStyle = '#6a6a70';
+      ctx.strokeStyle = color;
       ctx.beginPath();
       const sliceWidth = canvas.width / bufferLength;
       let x = 0;
@@ -113,8 +148,26 @@ export default function MenuBar({
     <div className="menu-bar" ref={menuRef}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginRight: 8, flexShrink: 0 }}>
         <img src="/icon.svg" alt="Arvgrid" style={{ width: 18, height: 18 }} />
-        <span style={{ fontWeight: 'bold', color: 'var(--text-muted)', fontSize: '0.85rem' }}>Arvgrid</span>
+        <span style={{ fontWeight: 300, color: '#ffffff', fontSize: '0.85rem' }}>Arvgrid</span>
       </div>
+
+      {/* 性能警告 */}
+      {performanceWarning && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 4,
+          padding: '2px 8px',
+          background: '#4a3a10',
+          borderRadius: 4,
+          fontSize: '0.7rem',
+          color: '#e0c040',
+          marginLeft: 8
+        }}>
+          <span style={{ fontSize: '0.9rem' }}>⚠</span>
+          <span>{lang === 'zh' ? '性能警告' : 'Performance'}</span>
+        </div>
+      )}
 
       {/* 文件菜单 */}
       <div className={`menu-item ${activeMenu === 'file' ? 'active' : ''}`} onClick={() => handleMenuClick('file')}>
